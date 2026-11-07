@@ -1,8 +1,6 @@
 //! Test support: the committed fixtures, and a small writer of synthetic
 //! FBX files (binary and ASCII) from a node tree, compressing arrays as
 //! exporters do.
-#![allow(dead_code)]
-
 use kinogaki_fbx::fbx::tree::{Array, Node, Value};
 use std::path::PathBuf;
 

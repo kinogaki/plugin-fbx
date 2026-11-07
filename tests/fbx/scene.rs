@@ -1,9 +1,8 @@
 //! Scenes from the committed exports: the values read are the values in the
 //! files, transforms place nodes where the writing application had them,
 //! and axes and units convert.
-mod common;
 
-use common::fixture;
+use crate::common::fixture;
 use kinogaki_fbx::fbx::{
     self, Attribute, Axes, Camera, Error, Family, LightKind, Mapping, Matrix, Projection, Scene,
     Wrap,
@@ -436,7 +435,7 @@ fn axes_and_units_read_from_global_settings() {
 
 #[test]
 fn every_fixture_reads_and_says_what_it_leaves_out() {
-    for name in common::fixtures() {
+    for name in crate::common::fixtures() {
         match fbx::read(&fixture(&name)) {
             Ok(scene) => assert!(!scene.models.is_empty(), "{name}"),
             Err(Error::Unsupported(_)) => assert!(name.contains("6100"), "{name}"),

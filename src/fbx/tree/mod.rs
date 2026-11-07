@@ -4,7 +4,7 @@
 //!
 //! Object names read the same from both: binary's `Name\0\x01Class` is
 //! written `Class::Name`, as ASCII spells it. Arrays are decoded after the
-//! tree is read, all of them side by side ([`arrays`]).
+//! tree is read, all of them side by side (`arrays`).
 mod arrays;
 mod ascii;
 mod binary;
@@ -87,6 +87,18 @@ impl Default for Array {
 /// Reads a binary or ASCII file's tree.
 pub fn parse(bytes: &[u8]) -> Result<Document, Error> {
     parse_with(bytes, &Options::default())
+}
+
+/// How a file starting with `head` was written, when it is FBX: binary by
+/// Kaydara's signature, ASCII by its first comment or header node.
+pub fn detect(head: &[u8]) -> Option<Format> {
+    if head.starts_with(binary::MAGIC) {
+        Some(Format::Binary)
+    } else if ascii::looks_like(head) {
+        Some(Format::Ascii)
+    } else {
+        None
+    }
 }
 
 /// [`parse`] with budgets and cancellation.

@@ -1,8 +1,7 @@
 //! The node tree: binary and ASCII read into the same tree; hostile sizes,
 //! damaged and truncated files fail cleanly; reading can be cancelled.
-mod common;
 
-use common::{Random, ascii, binary, fixture, fixtures, node, s};
+use crate::common::{Random, ascii, binary, fixture, fixtures, node, s};
 use kinogaki_fbx::fbx::tree::{self, Array, Format, Node, Value};
 use kinogaki_fbx::fbx::{self, Error, Limits, Options};
 

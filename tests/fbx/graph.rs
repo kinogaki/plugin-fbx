@@ -1,30 +1,29 @@
 //! The object graph on synthetic files (each written binary and ASCII):
 //! templates, shader families, instancing, inheritance, and what a damaged
 //! graph does.
-mod common;
 
-use common::{ascii, binary, node, p, s};
+use crate::common::{ascii, binary, node, p, s};
 use kinogaki_fbx::fbx::tree::{Array, Node, Value};
 use kinogaki_fbx::fbx::{self, Attribute, Error, Family, Inherit, Scene};
 
-fn int(i: i64) -> Value {
+pub(crate) fn int(i: i64) -> Value {
     Value::Int(i)
 }
 
-fn float(x: f64) -> Value {
+pub(crate) fn float(x: f64) -> Value {
     Value::Float(x)
 }
 
-fn floats(v: &[f64]) -> Value {
+pub(crate) fn floats(v: &[f64]) -> Value {
     Value::Array(Array::F64(v.to_vec()))
 }
 
-fn ints(v: &[i32]) -> Value {
+pub(crate) fn ints(v: &[i32]) -> Value {
     Value::Array(Array::I32(v.to_vec()))
 }
 
 /// An object node with a `Properties70`.
-fn object(
+pub(crate) fn object(
     class: &str,
     id: i64,
     name: &str,
@@ -40,11 +39,11 @@ fn object(
     )
 }
 
-fn oo(child: i64, parent: i64) -> Node {
+pub(crate) fn oo(child: i64, parent: i64) -> Node {
     node("C", vec![s("OO"), int(child), int(parent)], vec![])
 }
 
-fn op(child: i64, parent: i64, property: &str) -> Node {
+pub(crate) fn op(child: i64, parent: i64, property: &str) -> Node {
     node(
         "C",
         vec![s("OP"), int(child), int(parent), s(property)],
@@ -53,7 +52,7 @@ fn op(child: i64, parent: i64, property: &str) -> Node {
 }
 
 /// A unit triangle mesh, with `layers` under it.
-fn triangle(id: i64, layers: Vec<Node>) -> Node {
+pub(crate) fn triangle(id: i64, layers: Vec<Node>) -> Node {
     let mut children = vec![
         node(
             "Vertices",
@@ -70,9 +69,9 @@ fn triangle(id: i64, layers: Vec<Node>) -> Node {
     )
 }
 
-/// A file of `objects` and `connections`, with Phong and Lambert material
-/// templates, read binary and ASCII: both must agree.
-fn scene(objects: Vec<Node>, connections: Vec<Node>) -> Result<Scene, Error> {
+/// The tree of a file of `objects` and `connections`, with Phong and
+/// Lambert material templates.
+pub(crate) fn document(objects: Vec<Node>, connections: Vec<Node>) -> Vec<Node> {
     let template = |name: &str, diffuse: f64| {
         node(
             "PropertyTemplate",
@@ -112,7 +111,7 @@ fn scene(objects: Vec<Node>, connections: Vec<Node>) -> Result<Scene, Error> {
             node("ObjectType", vec![s("NodeAttribute")], vec![camera]),
         ],
     );
-    let tree = vec![
+    vec![
         node(
             "FBXHeaderExtension",
             vec![],
@@ -121,7 +120,13 @@ fn scene(objects: Vec<Node>, connections: Vec<Node>) -> Result<Scene, Error> {
         definitions,
         node("Objects", vec![], objects),
         node("Connections", vec![], connections),
-    ];
+    ]
+}
+
+/// A file of `objects` and `connections` ([`document`]), read binary and
+/// ASCII: both must agree.
+fn scene(objects: Vec<Node>, connections: Vec<Node>) -> Result<Scene, Error> {
+    let tree = document(objects, connections);
     let from_binary = fbx::read(&binary(&tree, 7400, true));
     let from_ascii = fbx::read(ascii(&tree, 7400).as_bytes());
     match (&from_binary, &from_ascii) {
@@ -139,7 +144,7 @@ fn scene(objects: Vec<Node>, connections: Vec<Node>) -> Result<Scene, Error> {
     from_binary
 }
 
-fn material(id: i64, name: &str, model: &str, properties: Vec<Node>) -> Node {
+pub(crate) fn material(id: i64, name: &str, model: &str, properties: Vec<Node>) -> Node {
     object(
         "Material",
         id,

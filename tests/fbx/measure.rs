@@ -1,63 +1,86 @@
-//! Times reading: a file's tree (arrays inflated or parsed side by side)
-//! and its scene, best of several runs. With no file, a synthetic mesh of a
-//! million triangles shaped as Blender writes one (points, polygons, edges,
-//! indexed normals and UVs, smoothing by edge, materials), binary and ASCII.
-//!
-//! ```sh
-//! cargo run --release --example bench              # the synthetic mesh
-//! cargo run --release --example bench -- big.fbx   # a file
-//! ```
-#[path = "../tests/common/mod.rs"]
-mod common;
-
-use common::{node, s};
-use kinogaki_fbx::fbx::tree::{self, Array, Node, Value};
-use kinogaki_fbx::fbx::{Options, Scene};
+//! The format's budget (render-agnostic PLAN, wave 10): a binary FBX of a
+//! million triangles read into the standard values in at most 120 ms, its
+//! arrays inflated in parallel, ASCII in at most three times that; release,
+//! best of seven on workers a thread a core, as Studio installs them. The
+//! file is synthetic, shaped as Blender writes one (points, polygons, edges,
+//! normals and UVs by corner through indices, smoothing by edge, materials).
+use crate::common::{ascii, binary, node, s};
+use kinogaki_fbx::Fbx;
+use kinogaki_fbx::fbx::tree::{Array, Node, Value};
+use kinogaki_studio_api::geometry::parallel::{self, Workers};
+use kinogaki_studio_api::geometry::{Units, UpAxis};
+use kinogaki_studio_api::{FileFormat, Input, Purpose, Reading};
+use kinogaki_studio_api_testing::Unconverted;
+use std::ops::Range;
+use std::panic::Location;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-const RUNS: usize = 7;
+/// The workers a host installs: the calling thread and scoped helpers, one
+/// a core, taking ranges from a shared counter.
+struct Pool(usize);
 
-fn main() {
-    match std::env::args().nth(1) {
-        Some(path) => time(&path, &std::fs::read(&path).expect("the file")),
-        None => {
-            let mesh = grid(1000, 500);
-            time(
-                "1M triangles, binary 7.4",
-                &common::binary(&mesh, 7400, true),
-            );
-            time(
-                "1M triangles, ASCII 7.4",
-                common::ascii(&mesh, 7400).as_bytes(),
-            );
+impl Workers for Pool {
+    fn run(
+        &self,
+        _: &'static Location<'static>,
+        len: usize,
+        minimum: usize,
+        work: &(dyn Fn(Range<usize>) -> bool + Sync),
+    ) {
+        let step = minimum.max(1);
+        let threads = self.0.min(len.div_ceil(step));
+        if threads <= 1 {
+            if len > 0 {
+                work(0..len);
+            }
+            return;
         }
+        let (next, stop) = (AtomicUsize::new(0), AtomicBool::new(false));
+        let take = || {
+            while !stop.load(Ordering::Relaxed) {
+                let start = next.fetch_add(step, Ordering::Relaxed);
+                if start >= len {
+                    break;
+                }
+                if !work(start..(start + step).min(len)) {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            }
+        };
+        std::thread::scope(|scope| {
+            (1..threads).for_each(|_| _ = scope.spawn(take));
+            take();
+        });
     }
 }
 
-fn time(what: &str, bytes: &[u8]) {
-    let (mut parse, mut build) = (Duration::MAX, Duration::MAX);
-    let mut triangles = 0;
-    for _ in 0..RUNS {
-        let start = Instant::now();
-        let document = tree::parse(bytes).expect("reads");
-        let parsed = Instant::now();
-        let scene = Scene::from_document(document, &Options::default()).expect("a scene");
-        let done = Instant::now();
-        parse = parse.min(parsed - start);
-        build = build.min(done - parsed);
-        triangles = scene
-            .meshes
-            .iter()
-            .map(|m| m.corners.len() - 2 * m.polygon_count())
-            .sum::<usize>();
-    }
-    println!(
-        "{what}: {:.1} MB, {triangles} triangles: tree {:.1} ms + scene {:.1} ms = {:.1} ms",
-        bytes.len() as f64 / 1e6,
-        parse.as_secs_f64() * 1e3,
-        build.as_secs_f64() * 1e3,
-        (parse + build).as_secs_f64() * 1e3
-    );
+/// The best of seven reads of `bytes` into the standard values.
+fn best(bytes: &[u8]) -> Duration {
+    let units = Units::new(1.0, UpAxis::Y).unwrap();
+    let reading = Reading::new(Purpose::Objects, units, &Unconverted);
+    (0..7)
+        .map(|_| {
+            let start = Instant::now();
+            let read = Fbx.read(&Input::memory("grid.fbx", bytes), &Fbx.options(), &reading);
+            assert!(read.unwrap().items.iter().any(|i| i.data.is_some()));
+            start.elapsed()
+        })
+        .min()
+        .unwrap()
+}
+
+#[test]
+#[ignore = "hand: a release measurement of a million triangles"]
+fn hand_run_a_million_triangles_read_within_the_budget() {
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    parallel::install(Box::leak(Box::new(Pool(threads))));
+    let mesh = grid(1000, 500);
+    let (binary_file, ascii_file) = (binary(&mesh, 7400, true), ascii(&mesh, 7400));
+    let (b, a) = (best(&binary_file), best(ascii_file.as_bytes()));
+    println!("MEASURE fbx 1M triangles: binary {b:.1?}, ASCII {a:.1?}");
+    assert!(b <= Duration::from_millis(120), "binary {b:?}");
+    assert!(a <= Duration::from_millis(360), "ASCII {a:?}");
 }
 
 /// A grid of `w × h` quads, each two triangles, in an FBX tree.

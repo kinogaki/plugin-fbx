@@ -1,8 +1,8 @@
 # FBX
 
-FBX as a read-only format plugin for [Kinogaki Studio](https://github.com/kinogaki). This repository holds the reader: binary FBX 7.1–7.7 and ASCII FBX 7.x into a plain scene of nodes, meshes with every layer, cameras, lights, materials with every property, textures and embedded media, with the file's axes and units. It knows no SDK. The plugin's boundary, which converts the scene into the public [studio-sdk](https://github.com/kinogaki/studio-sdk)'s standard values, comes with the SDK's next format contract: package `kinogaki.fbx`, format `kinogaki.format.fbx` (`.fbx`), the dylib `formats/fbx.dylib` in `plugin/`.
+FBX as a read-only format plugin for [Kinogaki Studio](https://github.com/kinogaki): binary FBX 7.1–7.7 and ASCII FBX 7.x read into the standard values of the public [studio-sdk](https://github.com/kinogaki/studio-sdk), placed in the project's units and axes, every material in the MaterialX model its shader family records into. FBX writes nothing (D24).
 
-The library crate is `kinogaki-fbx`; the reader is its `fbx` module.
+The library crate is `kinogaki-fbx`; `plugin/` (`kinogaki-plugin-fbx`) is the dylib Studio loads, `formats/fbx.dylib`. Package `kinogaki.fbx`, format `kinogaki.format.fbx` (`.fbx`). The reader is its `fbx` module, which knows no SDK but its workers; the format converts its scene into the standard values at its boundary (`src/read/`) and nowhere else.
 
 ```rust
 use kinogaki_fbx::fbx::{self, Axes};
@@ -11,6 +11,16 @@ let scene = fbx::read_file("model.fbx")?;
 let world = scene.world_matrices();                        // each node, in the file's system
 let into = scene.settings.conversion(&Axes::Y_UP, 100.0);  // that system into Y up, metres
 ```
+
+## Import
+
+File ▸ Import (and a File node) reads a file into the project's units and axes: the file's conversion into them (`Settings::conversion`, a mirroring for a left-handed file) is split into a uniform scale and a turn, each node's world matrix (every inheritance FBX knows) turned by it and its translation scaled, what it shows scaled and turned: the hierarchy keeps its shape and no placement carries the change of units. Items come parents first:
+
+- **Materials** first, one item, each keyed by its name (made unique), in the model of its shader family (DESIGN §6.5): Lambert and Phong (and a family the reader doesn't know) as Kinogaki's Phong Surface, every classic property in its input; Maya's, 3ds Max's and Arnold's Standard Surface and 3ds Max Physical as Standard Surface (Physical by Autodesk's mapping); 3ds Max OpenPBR as OpenPBR Surface; Stingray PBS, 3ds Max PBR metal/rough and 3ds Max glTF as glTF PBR (an unused Stingray map kept as an unwired Image node); 3ds Max PBR spec/gloss as USD Preview Surface's specular workflow, glossiness inverted into roughness. A PBR material's classic properties travel as an unconnected Phong Surface beside it. A texture is an Image node (`Video.Content` embedded as the file packs it, else `RelativeFilename` beside the file, then `FileName`; read in with **Embed Textures**) wired into a texture node of the model's own kind (`image`, `gltf_image`, `UsdUVTexture`) with its UV set, placement and wrap; a normal map through a normal map node, a bump map through a bump node, displacement through a displacement node and a Surface Material. Colors are taken to be linear Rec.709.
+- **Nodes**: groups; meshes as polygons (those repeating a point or of fewer than three corners left out and said; wound the other way where placing them mirrors), normals as `N`, UV sets as `uv`, `uv2`…, the first color set as `Cd` and `Alpha`, each polygon's material by its node's slots as `material`, smoothing (by edge, or groups by polygon) as the `sharp` edges, creases as `crease`, each on the domain its mapping names; cameras turned to look down their −Z (FBX's look down +X), with their lens and film back in millimetres; lights turned to shine down their −Z (FBX's down −Y), their intensity FBX's percentage over 100, approximated and said.
+- **A mesh several nodes show** is one value held once: each node places an instance of it by its geometric transform, naming its own material on the Instance domain where its slots give another one; a node whose slots give several others shows its own copy.
+
+Animation, skins and blend shapes are left out, said (D25).
 
 ## What it reads
 
@@ -46,15 +56,20 @@ let into = scene.settings.conversion(&Axes::Y_UP, 100.0);  // that system into Y
 | `src/fbx/scene/attributes.rs` | Cameras and lights |
 | `src/fbx/scene/transform.rs` | The transform stack and inheritance |
 | `src/fbx/scene/settings.rs` | Axes, units and their conversion |
-| `src/fbx/parallel.rs` | The one place work runs side by side: scoped threads until the plugin joins the SDK, then the SDK's workers |
+| `src/fbx/parallel.rs` | The one place work runs side by side, on the SDK's workers |
+| `src/lib.rs` | The package and the format |
+| `src/read/` | The scene into the standard values: the nodes and shared meshes (`mod.rs`), the file's space against the project's (`space.rs`), meshes (`geometry.rs`), materials by family (`materials.rs`) and the texture nodes and files they read (`textures.rs`), cameras and lights (`lights.rs`) |
 | `examples/dump.rs` | Prints what a file reads as (`--tree`, its node tree) |
-| `examples/bench.rs` | Times reading a file, or a synthetic million triangles |
 
 ## Tests and data
 
-- `tests/tree.rs`: synthetic trees written binary (7.1–7.7, raw and compressed) and ASCII read back; exporters' ASCII spellings; a long ASCII array cut into pieces; hostile array headers, deep nesting, truncation at every 97th byte and 3,400 mutated files fail cleanly; cancellation.
-- `tests/scene.rs`: the committed exports read as their files say. Transforms are checked against Houdini's own world matrices; every FBX 7 version reads the same scene; binary and ASCII agree to ASCII's 15 digits; a Z-up export converted into Y up lands on the Y-up export; embedded media keeps the file's bytes.
-- `tests/graph.rs`: synthetic scenes (each written binary and ASCII, which must read alike): template defaults, every material family, instancing, the three inheritances and the geometric transform, texture links and shared media, cycles, damaged layers, what one time leaves out.
+`cargo test` runs the unit tests and one test binary, `tests/fbx/`:
+
+- `tree.rs`: synthetic trees written binary (7.1–7.7, raw and compressed) and ASCII read back; exporters' ASCII spellings; a long ASCII array cut into pieces; hostile array headers, deep nesting, truncation at every 97th byte and 3,400 mutated files fail cleanly; cancellation.
+- `scene.rs`: the committed exports read as their files say. Transforms are checked against Houdini's own world matrices; every FBX 7 version reads the same scene; binary and ASCII agree to ASCII's 15 digits; a Z-up export converted into Y up lands on the Y-up export; embedded media keeps the file's bytes.
+- `graph.rs`: synthetic scenes (each written binary and ASCII, which must read alike): template defaults, every material family, instancing, the three inheritances and the geometric transform, texture links and shared media, cycles, damaged layers, what one time leaves out.
+- `format.rs`: the format through the SDK's contract, its color service converting nothing: Houdini's box where Houdini put it with its layers on their domains and its materials as Phong Surfaces with their textures; its camera looking down its −Z and its lights shining down theirs; the Z-up and the left-handed exports landing on the same box, faces facing the same way; embedded media embedded; Blender's normal map, hard edges and UV sets; units scaling points and not placements; each shader family's material in its model; a mesh two nodes show held once, each naming its material; a texture placed and wrapped; damaged files and a cancelled read.
+- `measure.rs`: the budget below (`hand_run_`).
 
 The committed files are our own:
 
@@ -69,7 +84,7 @@ Both scripts write their texture, an 8 × 8 checker PNG, themselves. The files r
 
 ## Performance
 
-Best of seven reads on an M4 Max (16 cores), release build, `cargo run --release --example bench`, with a load average of 5–13 from other work:
+The reader alone, best of seven reads on an M4 Max (16 cores), release build, with a load average of 5–13 from other work:
 
 | File | Size | Read (tree + scene) | Target |
 |---|---|---|---|
@@ -79,18 +94,23 @@ Best of seven reads on an M4 Max (16 cores), release build, `cargo run --release
 | Houdini, 1M triangles, ASCII 7.7 | 271.8 MB | 130 ms | 360 ms |
 | Synthetic, 1M triangles, ASCII 7.4 | 120.1 MB | 83 ms | 360 ms |
 
+Through the format into the standard values (`tests/fbx/measure.rs`, release, best of seven on workers a thread a core, load average 14 to 25 from other work), against the plan's budgets: the synthetic million triangles binary in 53.9 ms (120 ms), ASCII in 136.7 ms (360 ms).
+
 A binary file's time is that of its largest array, which is one zlib stream and can't be split: Houdini's 72 MB of normals inflate in about 100 ms (lib-image's DEFLATE runs this stream at about 0.7 GB/s; the system zlib inflates the same data recompressed in about 52 ms where lib-image takes 79 ms). Everything else runs beside it, and the scene takes 2–3 ms: arrays move out of the tree rather than being copied. The benchmark files come from `tools/houdini_bench.py` and `tools/blender_bench.py` and aren't committed.
 
 ## Building
 
-The reader builds from this repository and lib-image (its DEFLATE), checked out side by side as Studio's tree lays them out (`libs/lib-image/` two levels above this one), with the compiler the SDK pins (Rust 1.98.1):
+The format builds from this repository, the public studio-sdk and lib-image (its DEFLATE), checked out side by side as Studio's tree lays them out (`sdk/`, `libs/lib-image/` and `plugins/fbx/`), with the compiler the SDK pins (`sdk/rust-toolchain.toml`):
 
 ```sh
+git clone https://github.com/kinogaki/studio-sdk sdk
 git clone https://github.com/kinogaki/lib-image libs/lib-image
 git clone https://github.com/kinogaki/plugin-fbx plugins/fbx
 cd plugins/fbx
 cargo test
 ```
+
+`plugin/` links Studio's shared library (`kinogaki_shared`), so it is built in Studio's tree, or against a Studio release's plugin kit as the SDK's guides describe. Studio's tree also runs the FBX workflow (`workflows/`): Houdini's export imports with its materials, camera and lights.
 
 ## License
 
