@@ -14,6 +14,7 @@ kinogaki-fbx/fbx test format::each_shader_family_lands_in_its_model
 kinogaki-fbx/fbx test format::embedded_media_are_embedded_and_blenders_layers_land_on_their_domains
 kinogaki-fbx/fbx test format::houdinis_box_lands_where_houdini_put_it_with_its_layers_and_materials
 kinogaki-fbx/fbx test format::units_scale_points_not_placements
+kinogaki-fbx/fbx test format::y_up_and_z_up_files_read_into_the_other_up_axis_turned_not_mirrored
 kinogaki-fbx/fbx test graph::a_corner_naming_no_point_fails_the_read
 kinogaki-fbx/fbx test graph::a_cycle_of_parents_is_broken_and_said
 kinogaki-fbx/fbx test graph::a_layer_that_doesnt_fit_is_left_out_and_said

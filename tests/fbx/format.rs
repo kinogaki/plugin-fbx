@@ -226,6 +226,58 @@ fn a_z_up_export_lands_on_the_y_up_one_and_a_left_handed_one_faces_out() {
     }
 }
 
+/// Houdini's box `name` read into `units`, in the project: each point where
+/// it lands, and each face's normal by its winding beside the normal its
+/// first corner says (the box's normals are smoothed: within 60° of the
+/// face's, never facing away).
+fn box_in(name: &str, units: Units) -> (Vec<Vec3>, Vec<(Vec3, Vec3)>) {
+    let read = read_in(name, &fixture(name), units);
+    let at = world(&read, "box");
+    let g = standard::geometry()
+        .get(item(&read, "box").data.as_ref().unwrap())
+        .unwrap();
+    let points: Vec<Vec3> = (g.positions().iter())
+        .map(|p| at.apply_point(Vec3::from(*p)))
+        .collect();
+    let normals = (g.attributes())
+        .tuples::<[f32; 3]>(Domain::Vertex, names::N)
+        .unwrap();
+    let faces = (0..g.primitives().len())
+        .map(|face| {
+            let corners = g.primitives().primitive(face);
+            let corner = |c: usize| points[corners[c] as usize];
+            let wound = (corner(1) - corner(0)).cross(corner(2) - corner(0));
+            let first = g.primitives().primitive_vertices(face).start;
+            let said = at.apply_vector(Vec3::from(normals[first].map(f64::from)));
+            (wound.normalized().unwrap(), said.normalized().unwrap())
+        })
+        .collect();
+    (points, faces)
+}
+
+/// A Y-up file read into a Z-up project turns as a rotation does (its +Y the
+/// project's +Z, its +Z the project's −Y), and a Z-up file into a Y-up project
+/// the other way: each lands where the turn puts it, its faces facing where
+/// their normals say.
+#[test]
+fn y_up_and_z_up_files_read_into_the_other_up_axis_turned_not_mirrored() {
+    let z_up = Units::new(1.0, UpAxis::Z).unwrap();
+    let (y_in_y, _) = box_in("houdini/box_7400.fbx", metres());
+    let (y_in_z, faces) = box_in("houdini/box_7400.fbx", z_up);
+    for (a, b) in y_in_y.iter().zip(&y_in_z) {
+        let turned = Vec3::new(a.x, -a.z, a.y);
+        assert!((turned - *b).length() < 1e-6, "{a:?} at {b:?}");
+    }
+    for (face, (wound, said)) in faces.iter().enumerate() {
+        assert!(wound.dot(*said) > 0.5, "Y up into Z up, face {face}");
+    }
+    // Where it lands, `a_z_up_export_lands_on_the_y_up_one_and_a_left_handed_one_faces_out`.
+    let (_, faces) = box_in("houdini/box_zup.fbx", metres());
+    for (face, (wound, said)) in faces.iter().enumerate() {
+        assert!(wound.dot(*said) > 0.5, "Z up into Y up, face {face}");
+    }
+}
+
 #[test]
 fn embedded_media_are_embedded_and_blenders_layers_land_on_their_domains() {
     let read_box = read("houdini/box_embedded.fbx");
