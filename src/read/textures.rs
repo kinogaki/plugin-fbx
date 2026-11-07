@@ -209,8 +209,9 @@ impl<'a> Network<'a> {
     }
 
     /// The texture coordinates of texture node `at`: its UV set (by name
-    /// among `uv_sets`, else the first, which an unwired input reads) and
-    /// its placement.
+    /// among `uv_sets`, else the first, which a texture's unwired input
+    /// reads; a `place2d`'s reads none, so it is wired one) and its
+    /// placement.
     fn coordinates(&mut self, at: usize, texture: &Texture, sampler: Sampler, uv_sets: &[String]) {
         let set = uv_sets
             .iter()
@@ -227,14 +228,21 @@ impl<'a> Network<'a> {
         } else {
             "texcoord"
         };
-        let reader = |n: &mut Self| -> Option<usize> {
+        // What reads the set into `to`'s `input`: nothing where the input
+        // reads the first set unwired.
+        let reader = |n: &mut Self, to: usize, input: &str| -> Option<usize> {
+            let unwired = definition(&n.seed.nodes[to])
+                .input(input)?
+                .geomprop
+                .is_some();
             match (sampler, set) {
                 (Sampler::Preview, _) => {
                     let r = n.node("ND_UsdPrimvarReader_vector2", "UVs");
                     n.set(r, "varname", Value::Text(uv_name(set)));
                     Some(r)
                 }
-                (_, 0) => None,
+                (_, 0) if unwired => None,
+                (_, 0) => Some(n.node("ND_texcoord_vector2", "UVs")),
                 (_, _) => {
                     let r = n.node("ND_geompropvalue_vector2", "UVs");
                     n.set(r, "geomprop", Value::Text(uv_name(set)));
@@ -247,7 +255,7 @@ impl<'a> Network<'a> {
                 self.set(at, "offset", Value::Numbers(vec![tu, tv]));
                 self.set(at, "scale", Value::Numbers(vec![su, sv]));
                 self.set(at, "rotate", Value::Number(rotate));
-                if let Some(r) = reader(self) {
+                if let Some(r) = reader(self, at, input) {
                     self.seed.wire(r, "out", at, input);
                 }
             }
@@ -256,7 +264,7 @@ impl<'a> Network<'a> {
                 self.set(place, "offset", Value::Numbers(vec![tu, tv]));
                 self.set(place, "scale", Value::Numbers(vec![su, sv]));
                 self.set(place, "rotate", Value::Number(rotate));
-                if let Some(r) = reader(self) {
+                if let Some(r) = reader(self, place, "texcoord") {
                     self.seed.wire(r, "out", place, "texcoord");
                 }
                 self.seed.wire(place, "out", at, input);
@@ -266,13 +274,13 @@ impl<'a> Network<'a> {
                 self.set(place, "translation", Value::Numbers(vec![tu, tv]));
                 self.set(place, "scale", Value::Numbers(vec![su, sv]));
                 self.set(place, "rotation", Value::Number(rotate));
-                if let Some(r) = reader(self) {
+                if let Some(r) = reader(self, place, "in") {
                     self.seed.wire(r, "out", place, "in");
                 }
                 self.seed.wire(place, "out", at, input);
             }
             (_, false) => {
-                if let Some(r) = reader(self) {
+                if let Some(r) = reader(self, at, input) {
                     self.seed.wire(r, "out", at, input);
                 }
             }

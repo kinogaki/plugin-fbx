@@ -59,19 +59,24 @@ fn world(read: &Imported, name: &str) -> Xform {
     world
 }
 
-/// The node of `seed` of MaterialX node `node`.
-fn of_node<'a>(
-    seed: &'a NetworkSeed,
-    node: &str,
-) -> Option<&'a kinogaki_studio_api::network::NewNode> {
+/// Where the node of `seed` of MaterialX node `node` is.
+fn position(seed: &NetworkSeed, node: &str) -> Option<usize> {
     seed.nodes
         .iter()
-        .find(|n| match n.parameters.get(SIGNATURE) {
+        .position(|n| match n.parameters.get(SIGNATURE) {
             Some(Value::Choice(sig)) => kinogaki_mtlx::library()
                 .def(sig)
                 .is_some_and(|d| d.node == node),
             _ => false,
         })
+}
+
+/// The node of `seed` of MaterialX node `node`.
+fn of_node<'a>(
+    seed: &'a NetworkSeed,
+    node: &str,
+) -> Option<&'a kinogaki_studio_api::network::NewNode> {
+    position(seed, node).map(|at| &seed.nodes[at])
 }
 
 #[test]
@@ -470,10 +475,13 @@ fn a_texture_under_a_property_reaches_its_input_placed_and_wrapped() {
         image.parameters["uaddressmode"],
         Value::Choice("clamp".into())
     );
-    assert!(
-        of_node(wood, "place2d").is_some(),
-        "its translation places it"
-    );
+    let place = position(wood, "place2d").expect("its translation places it");
+    // place2d reads no UVs unwired (a constant (0, 0) in MaterialX): its
+    // texture coordinates are wired, the first set's.
+    let uvs = (wood.wires.iter())
+        .find(|w| w.to == place && w.input == "texcoord")
+        .expect("its texture coordinates are wired");
+    assert_eq!(Some(uvs.from), position(wood, "texcoord"));
     let file = wood
         .nodes
         .iter()
