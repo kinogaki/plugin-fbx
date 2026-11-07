@@ -5,7 +5,7 @@
 //! holds each application's own units as a percentage), its decay left to
 //! the light's falloff, said.
 use crate::fbx::{AreaShape, Camera as FbxCamera, Decay, Light as FbxLight, LightKind, Projection};
-use kinogaki_render_api::standard::{Light, Shape};
+use kinogaki_render_api::standard::{Light, LightShape};
 use kinogaki_render_api::{Camera, Projection as Lens};
 use kinogaki_studio_api::Error;
 use kinogaki_studio_api::color::{ColorService, LIN_REC709};
@@ -49,14 +49,14 @@ pub(super) fn light(
 ) -> Result<Option<Light>, Error> {
     let unit = (scale as f32).max(f32::MIN_POSITIVE);
     let shape = match (light.kind, light.area_shape) {
-        (LightKind::Point, _) | (LightKind::Area, AreaShape::Sphere) => Shape::Spot {
+        (LightKind::Point, _) | (LightKind::Area, AreaShape::Sphere) => LightShape::Spot {
             radius: unit * 0.1,
             cone_angle: 180.0,
             cone_softness: 0.0,
         },
         (LightKind::Spot, _) => {
             let [inner, outer] = light.cone.map(|a| a as f32);
-            Shape::Spot {
+            LightShape::Spot {
                 radius: unit * 0.1,
                 cone_angle: (outer / 2.0).clamp(0.0, 180.0),
                 cone_softness: if outer > 0.0 {
@@ -66,8 +66,8 @@ pub(super) fn light(
                 },
             }
         }
-        (LightKind::Directional, _) => Shape::Distant { angle: 0.0 },
-        (LightKind::Area, AreaShape::Rectangle) => Shape::Rect {
+        (LightKind::Directional, _) => LightShape::Distant { angle: 0.0 },
+        (LightKind::Area, AreaShape::Rectangle) => LightShape::Rect {
             width: unit,
             height: unit,
         },

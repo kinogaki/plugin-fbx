@@ -9,7 +9,7 @@ use crate::graph::{document, float, floats, ints, material, object, oo, op, tria
 use kinogaki_fbx::Fbx;
 use kinogaki_fbx::fbx::tree::{Node, Value as Raw};
 use kinogaki_render_api::material::mtlx::SIGNATURE;
-use kinogaki_render_api::standard::Shape;
+use kinogaki_render_api::standard::LightShape;
 use kinogaki_studio_api::geometry::image::ImageFile;
 use kinogaki_studio_api::geometry::{Domain, Units, UpAxis, Vec3, Xform, names};
 use kinogaki_studio_api::image_files::{IMAGE_NODE, image_source};
@@ -156,7 +156,7 @@ fn cameras_look_down_their_minus_z_and_lights_shine_down_theirs() {
         .unwrap();
     assert!(matches!(
         point.shape,
-        Shape::Spot {
+        LightShape::Spot {
             cone_angle: 180.0,
             ..
         }
