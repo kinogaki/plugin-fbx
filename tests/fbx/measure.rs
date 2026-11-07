@@ -7,53 +7,10 @@
 use crate::common::{ascii, binary, node, s};
 use kinogaki_fbx::Fbx;
 use kinogaki_fbx::fbx::tree::{Array, Node, Value};
-use kinogaki_studio_api::geometry::parallel::{self, Workers};
 use kinogaki_studio_api::geometry::{Units, UpAxis};
 use kinogaki_studio_api::{FileFormat, Input, Purpose, Reading};
-use kinogaki_studio_api_testing::Unconverted;
-use std::ops::Range;
-use std::panic::Location;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use kinogaki_studio_api_testing::{Unconverted, workers};
 use std::time::{Duration, Instant};
-
-/// The workers a host installs: the calling thread and scoped helpers, one
-/// a core, taking ranges from a shared counter.
-struct Pool(usize);
-
-impl Workers for Pool {
-    fn run(
-        &self,
-        _: &'static Location<'static>,
-        len: usize,
-        minimum: usize,
-        work: &(dyn Fn(Range<usize>) -> bool + Sync),
-    ) {
-        let step = minimum.max(1);
-        let threads = self.0.min(len.div_ceil(step));
-        if threads <= 1 {
-            if len > 0 {
-                work(0..len);
-            }
-            return;
-        }
-        let (next, stop) = (AtomicUsize::new(0), AtomicBool::new(false));
-        let take = || {
-            while !stop.load(Ordering::Relaxed) {
-                let start = next.fetch_add(step, Ordering::Relaxed);
-                if start >= len {
-                    break;
-                }
-                if !work(start..(start + step).min(len)) {
-                    stop.store(true, Ordering::Relaxed);
-                }
-            }
-        };
-        std::thread::scope(|scope| {
-            (1..threads).for_each(|_| _ = scope.spawn(take));
-            take();
-        });
-    }
-}
 
 /// The best of seven reads of `bytes` into the standard values.
 fn best(bytes: &[u8]) -> Duration {
@@ -73,8 +30,7 @@ fn best(bytes: &[u8]) -> Duration {
 #[test]
 #[ignore = "hand: a release measurement of a million triangles"]
 fn hand_run_a_million_triangles_read_within_the_budget() {
-    let threads = std::thread::available_parallelism().map_or(1, usize::from);
-    parallel::install(Box::leak(Box::new(Pool(threads))));
+    workers::install(0);
     let mesh = grid(1000, 500);
     let (binary_file, ascii_file) = (binary(&mesh, 7400, true), ascii(&mesh, 7400));
     let (b, a) = (best(&binary_file), best(ascii_file.as_bytes()));

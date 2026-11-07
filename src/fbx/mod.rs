@@ -15,7 +15,6 @@
 //! allocated, nesting stops at its depth, and its cancellation stops a read
 //! between nodes and inside each array's inflation.
 mod error;
-mod parallel;
 mod scene;
 pub mod tree;
 

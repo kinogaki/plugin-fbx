@@ -18,14 +18,15 @@ mod textures;
 use crate::fbx::{self, Attribute, Light, Matrix, Model, Scene};
 use geometry::Shaping;
 use kinogaki_studio_api::format::files::Named;
+use kinogaki_studio_api::format::{Conversion, Unique};
 use kinogaki_studio_api::geometry::{self as values, Attributes, Domain, Text, Vec3, Xform, names};
 use kinogaki_studio_api::standard::{self, Instances, Materials};
 use kinogaki_studio_api::{
     Data, Diagnostic, Error, FileItem, FormatOptions, Imported, Input, Reading,
 };
 use materials::Shading;
-use space::{Space, frame};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use space::{frame, shown};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use textures::Files;
 
@@ -40,7 +41,8 @@ pub(crate) fn read(
     let mut scene = fbx::read_with(&bytes, &reading.budget).map_err(|e| failed(input, e))?;
     drop(bytes);
     reading.check()?;
-    let space = Space::new(&scene.settings, reading.units);
+    let space = space::conversion(&scene.settings, reading.units)
+        .map_err(|e| Error::invalid(format!("{input}: {}", e.message())))?;
     let mut said: BTreeSet<String> = std::mem::take(&mut scene.warnings).into_iter().collect();
     let named = Named::new(input, chosen, reading);
     let mut files = Files::new(&mut scene.videos, &named);
@@ -56,7 +58,7 @@ pub(crate) fn read(
             uv_sets: &uv_sets,
         };
         let (mut material, approximated) = materials::material(m, key, &mut shading);
-        let unconverted = material.inside.scale_lengths(space.scale);
+        let unconverted = material.inside.scale_lengths(space.scale());
         if unconverted > 0 {
             said.insert(format!(
                 "{}: {unconverted} lengths driven by textures keep the file's units",
@@ -87,7 +89,11 @@ pub(crate) fn read(
             standard::materials().wrap(looks),
         ));
     }
-    let placed: Vec<Xform> = walk.worlds.iter().map(|w| space.placement(w)).collect();
+    let placed: Vec<Xform> = walk
+        .worlds
+        .iter()
+        .map(|w| space.placement(&space::xform(w)))
+        .collect();
     let mut item_of = Vec::with_capacity(scene.models.len());
     for (i, model) in scene.models.iter().enumerate() {
         reading.check()?;
@@ -118,22 +124,11 @@ fn failed(input: &Input<'_>, e: fbx::Error) -> Error {
     }
 }
 
-/// Each material's key: its name, made unique (`name_1`, `name_2`…), each
-/// name's copies counted from the last one taken, so many of one name cost
-/// no more than many names.
+/// Each material's key: its name, made unique (`name_1`, `name_2`…).
 fn keys(scene: &Scene) -> Vec<Arc<str>> {
-    let mut taken = HashSet::new();
-    let mut copies: HashMap<&str, usize> = HashMap::new();
+    let mut taken = Unique::names();
     (scene.materials.iter())
-        .map(|m| {
-            let mut key = m.name.clone();
-            while !taken.insert(key.clone()) {
-                let copy = copies.entry(&m.name).or_insert(0);
-                *copy += 1;
-                key = format!("{}_{copy}", m.name);
-            }
-            Arc::from(key)
-        })
+        .map(|m| Arc::from(taken.take(&m.name)))
         .collect()
 }
 
@@ -163,7 +158,7 @@ fn users(scene: &Scene) -> Vec<usize> {
 /// The walk over the scene's nodes.
 struct Walk<'s> {
     scene: &'s Scene,
-    space: Space,
+    space: Conversion,
     shaping: Shaping<'s>,
     /// Each node's world matrix in the file.
     worlds: Vec<Matrix>,
@@ -188,7 +183,7 @@ impl Walk<'_> {
             Attribute::Null | Attribute::Bone => (placed, None),
             Attribute::Mesh(k) if self.users[*k] > 1 => (placed, self.instance(*k, model)?),
             Attribute::Mesh(k) => {
-                let at = self.space.shown(&model.geometric.matrix());
+                let at = shown(&self.space, &model.geometric.matrix());
                 let mesh = geometry::mesh(
                     &scene.meshes[*k],
                     &at,
@@ -200,7 +195,7 @@ impl Walk<'_> {
             }
             Attribute::Camera(k) => {
                 let camera = &scene.cameras[*k];
-                let lens = lights::camera(camera, self.space.scale, scene.settings.unit);
+                let lens = lights::camera(camera, self.space.scale(), scene.settings.unit);
                 let turned = self.turned(&inner, fbx::Camera::LOOK, fbx::Camera::UP);
                 match (turned, standard::lens(lens)) {
                     (Some(world), Ok(lens)) => (world, Some(standard::camera().wrap(lens))),
@@ -214,7 +209,7 @@ impl Walk<'_> {
                 let turned = self.turned(&inner, Light::DIRECTION, [0.0, 0.0, -1.0]);
                 match (
                     turned,
-                    lights::light(light, self.space.scale, self.shaping.colors)?,
+                    lights::light(light, self.space.scale(), self.shaping.colors)?,
                 ) {
                     (Some(world), Some(light)) => (world, Some(standard::light().wrap(light))),
                     _ => (placed, None),
@@ -235,8 +230,8 @@ impl Walk<'_> {
     /// `up` up in its node: turned to look down its −Z with +Y up, at its
     /// node's origin in the project.
     fn turned(&self, inner: &Matrix, look: [f64; 3], up: [f64; 3]) -> Option<Xform> {
-        let origin = self.space.shown(inner).apply_point(Vec3::ZERO);
-        let direction = |v: [f64; 3]| self.space.direction(inner.vector(v));
+        let origin = shown(&self.space, inner).apply_point(Vec3::ZERO);
+        let direction = |v: [f64; 3]| self.space.direction(inner.vector(v).into());
         frame(origin, direction(look), direction(up))
     }
 
@@ -246,7 +241,7 @@ impl Walk<'_> {
     fn instance(&mut self, k: usize, model: &Model) -> Result<Option<Data>, Error> {
         let scene = self.scene;
         if !self.shared.contains_key(&k) {
-            let at = self.space.shown(&Matrix::IDENTITY);
+            let at = shown(&self.space, &Matrix::IDENTITY);
             let mesh = geometry::mesh(
                 &scene.meshes[k],
                 &at,
@@ -272,7 +267,7 @@ impl Walk<'_> {
                 )?
             }
             _ => {
-                let at = self.space.shown(&model.geometric.matrix());
+                let at = shown(&self.space, &model.geometric.matrix());
                 let mesh = geometry::mesh(
                     &scene.meshes[k],
                     &at,
@@ -283,7 +278,11 @@ impl Walk<'_> {
                 return Ok(Some(standard::geometry().wrap(mesh)));
             }
         };
-        let at = vec![self.space.placement(&model.geometric.matrix())].into();
+        let at = vec![
+            self.space
+                .placement(&space::xform(&model.geometric.matrix())),
+        ]
+        .into();
         let instances = Instances::new(vec![prototype], at, None, attributes)?;
         Ok(Some(standard::instances().wrap(instances)))
     }

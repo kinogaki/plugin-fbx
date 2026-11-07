@@ -7,7 +7,7 @@
 use super::space::determinant;
 use crate::fbx::{Layer, Mapping, Mesh};
 use kinogaki_studio_api::Error;
-use kinogaki_studio_api::color::ColorService;
+use kinogaki_studio_api::color::{ColorService, LIN_REC709};
 use kinogaki_studio_api::format::ReadBudget;
 use kinogaki_studio_api::geometry::{
     Attribute, Attributes, Column, Domain, Elements, Geometry, Meaning, Primitives, Text, Vec3,
@@ -15,9 +15,6 @@ use kinogaki_studio_api::geometry::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-
-/// The space FBX's colors are taken to be in: linear Rec.709.
-pub(super) const COLORS: &str = "lin_rec709_scene";
 
 /// What making geometry needs: the color service, each material's key by
 /// its index in the scene, and the read's budget, which each mesh made is
@@ -111,7 +108,7 @@ pub(super) fn mesh(
         let mut rgb: Vec<[f64; 3]> = (values.as_chunks::<4>().0.iter())
             .map(|c| [c[0], c[1], c[2]].map(f64::from))
             .collect();
-        if let Err(e) = cx.colors.to_working(COLORS, &mut rgb) {
+        if let Err(e) = cx.colors.to_working(LIN_REC709, &mut rgb) {
             warnings.push(format!("{}: colors kept as they are: {e}", mesh.name));
         }
         let cd: Vec<[f32; 3]> = rgb.iter().map(|c| c.map(|v| v as f32)).collect();

@@ -3,16 +3,16 @@
 //! nodes wired into texture nodes of the model's own kind (MaterialX's
 //! `image`, glTF PBR's `gltf_image`, USD Preview Surface's `UsdUVTexture`),
 //! one Image node per file and color in a network.
-use super::geometry::{COLORS, uv_name};
+use super::geometry::uv_name;
 use crate::fbx::{Property, Texture, Video, Wrap};
 use kinogaki_mtlx::{NodeDef, Type, library};
 use kinogaki_studio_api::Value;
-use kinogaki_studio_api::color::ColorService;
+use kinogaki_studio_api::color::{ColorService, LIN_REC709};
+use kinogaki_studio_api::format::Unique;
 use kinogaki_studio_api::format::files::Named;
 use kinogaki_studio_api::geometry::image::{EmbeddedFile, ImageColor, ImageFile, ImageSource};
 use kinogaki_studio_api::image_files::image_node;
 use kinogaki_studio_api::network::{NetworkSeed, NewNode};
-use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -79,7 +79,7 @@ pub(super) enum Sampler {
 pub(super) struct Network<'a> {
     pub seed: NetworkSeed,
     images: Vec<(ImageSource, usize)>,
-    names: HashSet<String>,
+    names: Unique,
     colors: &'a dyn ColorService,
     /// What was approximated or left out, one line each.
     pub said: Vec<String>,
@@ -90,7 +90,7 @@ impl<'a> Network<'a> {
         Network {
             seed: NetworkSeed::default(),
             images: Vec::new(),
-            names: HashSet::new(),
+            names: Unique::names(),
             colors,
             said: Vec::new(),
         }
@@ -124,7 +124,7 @@ impl<'a> Network<'a> {
             (Type::Boolean, [v, ..]) => Value::Bool(*v != 0.0),
             (Type::Color3, [r, g, b, ..]) => {
                 let mut rgb = [[*r, *g, *b]];
-                if let Err(e) = self.colors.to_working(COLORS, &mut rgb) {
+                if let Err(e) = self.colors.to_working(LIN_REC709, &mut rgb) {
                     self.said.push(format!("colors kept as they are: {e}"));
                 }
                 Value::Color(rgb[0])
@@ -301,15 +301,9 @@ impl<'a> Network<'a> {
         }
     }
 
-    /// `name`, or `name1`, `name2`… not taken yet.
+    /// `name`, or `name_1`, `name_2`… not taken yet.
     fn unique(&mut self, name: &str) -> String {
-        let mut taken = name.to_owned();
-        let mut copy = 1;
-        while !self.names.insert(taken.clone()) {
-            taken = format!("{name}{copy}");
-            copy += 1;
-        }
-        taken
+        self.names.take(name)
     }
 }
 

@@ -5,10 +5,11 @@ use super::properties::Properties;
 use super::shading::{self, Material, Texture, TextureLink, Video};
 use super::transform::{Geometric, Inherit, RotationOrder, Transform};
 use super::{Attribute, Camera, Light, Mesh, Model, Scene, Settings, mesh};
+use crate::fbx::Error;
 use crate::fbx::error::At;
 use crate::fbx::tree::{Document, Node};
-use crate::fbx::{Error, parallel};
 use kinogaki_studio_api::format::ReadBudget;
+use kinogaki_studio_api::geometry::parallel;
 use std::collections::HashMap;
 use std::sync::Mutex;
 

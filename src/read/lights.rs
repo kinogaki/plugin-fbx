@@ -4,12 +4,11 @@
 //! its `OrthoZoom` in file units. A light's intensity is approximated (FBX
 //! holds each application's own units as a percentage), its decay left to
 //! the light's falloff, said.
-use super::geometry::COLORS;
 use crate::fbx::{AreaShape, Camera as FbxCamera, Decay, Light as FbxLight, LightKind, Projection};
 use kinogaki_render_api::standard::{Light, Shape};
 use kinogaki_render_api::{Camera, Projection as Lens};
 use kinogaki_studio_api::Error;
-use kinogaki_studio_api::color::ColorService;
+use kinogaki_studio_api::color::{ColorService, LIN_REC709};
 
 /// `camera` as the standard lens: distances times `scale` (the project's
 /// units per file unit); an orthographic view `unit` centimetres a file
@@ -75,7 +74,7 @@ pub(super) fn light(
         (LightKind::Volume, _) => return Ok(None),
     };
     let mut color = [light.color];
-    colors.to_working(COLORS, &mut color)?;
+    colors.to_working(LIN_REC709, &mut color)?;
     Ok(Some(Light {
         shape,
         color: color[0].map(|c| c as f32),

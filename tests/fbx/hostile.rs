@@ -8,11 +8,12 @@ use crate::graph::{document, floats, int, ints, material, object, oo, op, triang
 use kinogaki_fbx::Fbx;
 use kinogaki_fbx::fbx::tree::{self, Node};
 use kinogaki_fbx::fbx::{self, Error};
-use kinogaki_studio_api::format::options::{EMBED, OUTSIDE};
+use kinogaki_studio_api::format::options::EMBED;
 use kinogaki_studio_api::format::{ReadBudget, ReadLimits};
 use kinogaki_studio_api::{FileFormat, FormatOptions, Imported, Input, Value};
+use kinogaki_studio_api_testing::format::Scratch;
 use kinogaki_studio_api_testing::read_hostile;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 /// How long a hostile read may take in a debug build: seconds where the
@@ -196,14 +197,10 @@ fn a_mesh_copied_for_each_node_is_charged_for_each() {
 
 /// A new folder holding `scene/` (where the file is read), by its
 /// canonical path.
-fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "kinogaki-fbx-hostile-{name}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
+fn scratch(name: &str) -> Scratch {
+    let dir = Scratch::new(&format!("fbx-hostile-{name}"));
     std::fs::create_dir_all(dir.join("scene")).unwrap();
-    dir.canonicalize().unwrap()
+    dir
 }
 
 /// A file whose material reads a texture of each `(FileName,
@@ -241,7 +238,7 @@ fn textured(files: &[(&str, &str)]) -> Vec<u8> {
 }
 
 #[test]
-fn textures_out_of_the_folder_or_not_regular_are_never_read() {
+fn textures_out_of_the_folder_are_read_and_what_isnt_regular_never_is() {
     let dir = scratch("textures");
     std::fs::write(dir.join("secret.png"), b"key").unwrap();
     std::fs::write(dir.join("scene/wood.png"), b"wood").unwrap();
@@ -264,11 +261,6 @@ fn textures_out_of_the_folder_or_not_regular_are_never_read() {
     std::fs::write(&file, textured(&files)).unwrap();
     let read = read_file(&file, &[(EMBED, true)]);
     let said: Vec<&str> = read.warnings.iter().map(|w| w.message.as_str()).collect();
-    let outside = said
-        .iter()
-        .find(|w| w.contains("outside the folder"))
-        .expect("listed");
-    assert!(outside.ends_with("../secret.png, /etc/hosts"), "{said:?}");
     assert!(
         said.iter().any(|w| w.ends_with("never read: pipe.png")),
         "{said:?}"
@@ -277,23 +269,10 @@ fn textures_out_of_the_folder_or_not_regular_are_never_read() {
         .get(read.items[0].data.as_ref().unwrap())
         .unwrap();
     let inside = format!("{:?}", held.materials[0].inside);
-    assert!(inside.contains("wood") && !inside.contains("hosts") && !inside.contains("secret"));
-    // `../secret.png` is read once files outside are, a pipe never.
-    let anywhere = read_file(&file, &[(EMBED, true), (OUTSIDE, true)]);
-    let said: Vec<&str> = anywhere
-        .warnings
-        .iter()
-        .map(|w| w.message.as_str())
-        .collect();
-    assert!(
-        said.iter().any(|w| w.ends_with("never read: pipe.png")),
-        "{said:?}"
-    );
-    assert!(
-        !said.iter().any(|w| w.contains("outside the folder")),
-        "{said:?}"
-    );
-    std::fs::remove_dir_all(&dir).unwrap();
+    for read in ["wood", "hosts", "secret"] {
+        assert!(inside.contains(read), "{read}, embedded wherever it is");
+    }
+    assert!(!inside.contains("pipe"));
 }
 
 #[test]

@@ -6,8 +6,9 @@
 //! inflates to besides, which a compressed array's own bytes must be able
 //! to hold.
 use super::{Array, Node, Value};
-use crate::fbx::{Error, error::At, parallel};
+use crate::fbx::{Error, error::At};
 use kinogaki_studio_api::format::ReadBudget;
+use kinogaki_studio_api::geometry::parallel;
 use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 

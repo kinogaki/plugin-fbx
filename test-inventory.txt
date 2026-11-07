@@ -26,7 +26,7 @@ kinogaki-fbx/fbx test hostile::a_compressed_array_is_charged_as_it_inflates_and_
 kinogaki-fbx/fbx test hostile::a_mesh_copied_for_each_node_is_charged_for_each
 kinogaki-fbx/fbx test hostile::a_polygon_of_two_hundred_thousand_corners_is_checked_in_n_log_n
 kinogaki-fbx/fbx test hostile::nesting_reads_to_the_budgets_depth_on_imports_stack_and_no_deeper
-kinogaki-fbx/fbx test hostile::textures_out_of_the_folder_or_not_regular_are_never_read
+kinogaki-fbx/fbx test hostile::textures_out_of_the_folder_are_read_and_what_isnt_regular_never_is
 kinogaki-fbx/fbx test hostile::thousands_of_templates_are_matched_without_copying_their_names
 kinogaki-fbx/fbx test hostile::twenty_thousand_materials_of_one_name_are_keyed_in_linear_time
 kinogaki-fbx/fbx test scene::a_houdini_box_reads_as_its_file_says
