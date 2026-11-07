@@ -10,7 +10,8 @@
 //! nothing the reader needs.
 use super::arrays::{Deferred, Kind};
 use super::{Document, Format, Node, Value};
-use crate::fbx::{Error, Options, error::At};
+use crate::fbx::{Error, error::At};
+use kinogaki_studio_api::format::ReadBudget;
 
 /// The first bytes of every binary file.
 pub(super) const MAGIC: &[u8] = b"Kaydara FBX Binary  \0";
@@ -18,7 +19,7 @@ pub(super) const MAGIC: &[u8] = b"Kaydara FBX Binary  \0";
 /// The header's length, and where the first record starts.
 const HEADER: usize = 27;
 
-pub(super) fn parse(bytes: &[u8], options: &Options) -> Result<Document, Error> {
+pub(super) fn parse(bytes: &[u8], budget: &ReadBudget) -> Result<Document, Error> {
     let version = bytes
         .get(23..HEADER)
         .map(|v| u32::from_le_bytes([v[0], v[1], v[2], v[3]]))
@@ -33,12 +34,12 @@ pub(super) fn parse(bytes: &[u8], options: &Options) -> Result<Document, Error> 
         at: HEADER,
         wide: version >= 7500,
         path: Vec::new(),
-        arrays: Deferred::new(options.limits),
-        options,
+        arrays: Deferred::new(budget),
+        budget,
     };
     let mut nodes = reader.list(bytes.len(), 0, true)?;
     let Reader { arrays, .. } = reader;
-    arrays.decode_into(&mut nodes, options, |at| At::Byte(at as u64))?;
+    arrays.decode_into(&mut nodes, budget, |at| At::Byte(at as u64))?;
     Ok(Document {
         version,
         format: Format::Binary,
@@ -54,7 +55,7 @@ struct Reader<'a, 'o> {
     /// Child indices down to the node being read, for its arrays.
     path: Vec<u32>,
     arrays: Deferred<'a>,
-    options: &'o Options<'o>,
+    budget: &'o ReadBudget,
 }
 
 /// A record's header.
@@ -109,13 +110,16 @@ impl<'a> Reader<'a, '_> {
     /// Records up to `end` or a record of zeros: the top level must end
     /// with one, so a file cut short never reads as a smaller one.
     fn list(&mut self, end: usize, depth: usize, top: bool) -> Result<Vec<Node>, Error> {
-        if depth > self.options.limits.depth {
-            return Err(self.error(self.at, "nodes nest deeper than the depth budget"));
+        if let Err(e) = self.budget.nest(depth) {
+            return Err(match e.is_cancelled() {
+                true => Error::Cancelled,
+                false => self.error(self.at, e.message()),
+            });
         }
         let mut nodes = Vec::new();
         while self.at < end || top {
             if top {
-                self.options.check()?;
+                self.budget.check()?;
             }
             let start = self.at;
             let header = Header {
@@ -209,7 +213,7 @@ impl<'a> Reader<'a, '_> {
                 let data = self.take(len)?;
                 self.arrays
                     .binary(&self.path, index, kind, count, compressed, data, at)
-                    .map_err(|message| self.error(at, message))?;
+                    .map_err(|why| why.at(At::Byte(at as u64)))?;
                 Value::Array(super::Array::default())
             }
             other => return Err(self.error(at, format!("a value of unknown type {other:#04x}"))),

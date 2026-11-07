@@ -36,8 +36,8 @@ pub(crate) struct Graph<'d> {
     children: Vec<Vec<Link<'d>>>,
     /// For each object, what it is connected under, in file order.
     parents: Vec<Vec<Link<'d>>>,
-    /// Templates by class, with their names.
-    templates: HashMap<&'d str, Vec<(&'d str, Arc<Template>)>>,
+    /// Templates by class, with their names in lowercase.
+    templates: HashMap<&'d str, Vec<(String, Arc<Template>)>>,
 }
 
 impl<'d> Graph<'d> {
@@ -80,7 +80,7 @@ impl<'d> Graph<'d> {
         for kind in types.into_iter().flatten() {
             let Some(class) = kind.str(0) else { continue };
             for template in kind.children_named("PropertyTemplate") {
-                let name = template.str(0).unwrap_or("");
+                let name = template.str(0).unwrap_or("").to_ascii_lowercase();
                 templates
                     .entry(class)
                     .or_default()
@@ -136,12 +136,10 @@ impl<'d> Graph<'d> {
     fn template(&self, object: &Object) -> Option<Arc<Template>> {
         let candidates = self.templates.get(object.class)?;
         let model = object.node.child_str("ShadingModel").unwrap_or("");
-        let own = candidates.iter().find(|(name, _)| {
-            let name = name.to_ascii_lowercase();
-            [object.subclass, model]
-                .iter()
-                .any(|s| !s.is_empty() && name.ends_with(&s.to_ascii_lowercase()))
-        });
+        let ends = [object.subclass, model].map(str::to_ascii_lowercase);
+        let own = candidates
+            .iter()
+            .find(|(name, _)| (ends.iter()).any(|s| !s.is_empty() && name.ends_with(s.as_str())));
         let fallback = || {
             candidates
                 .first()

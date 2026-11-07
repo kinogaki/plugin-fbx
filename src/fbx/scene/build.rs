@@ -7,11 +7,12 @@ use super::transform::{Geometric, Inherit, RotationOrder, Transform};
 use super::{Attribute, Camera, Light, Mesh, Model, Scene, Settings, mesh};
 use crate::fbx::error::At;
 use crate::fbx::tree::{Document, Node};
-use crate::fbx::{Error, Options, parallel};
+use crate::fbx::{Error, parallel};
+use kinogaki_studio_api::format::ReadBudget;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-pub(super) fn scene(mut document: Document, options: &Options) -> Result<Scene, Error> {
+pub(super) fn scene(mut document: Document, budget: &ReadBudget) -> Result<Scene, Error> {
     if document.version != 0 && document.version < 7000 {
         return Err(Error::Unsupported(format!(
             "FBX {}.{} files aren't read: export FBX 2011 (7.1) or later",
@@ -20,8 +21,8 @@ pub(super) fn scene(mut document: Document, options: &Options) -> Result<Scene, 
         )));
     }
     let mut warnings = Vec::new();
-    let meshes = meshes(&mut document, options, &mut warnings)?;
-    options.check()?;
+    let meshes = meshes(&mut document, budget, &mut warnings)?;
+    budget.check()?;
     let graph = Graph::new(&document);
     let (settings, axes_warning) = Settings::from_properties(
         document
@@ -34,9 +35,10 @@ pub(super) fn scene(mut document: Document, options: &Options) -> Result<Scene, 
     let videos: Vec<Video> = graph.of_class("Video").map(|i| video(&graph, i)).collect();
     let video_at = indices(&graph, "Video");
     let texture_at = indices(&graph, "Texture");
+    let packed = Packed::of(&videos);
     let textures: Vec<Texture> = graph
         .of_class("Texture")
-        .map(|i| texture(&graph, i, &video_at, &videos))
+        .map(|i| texture(&graph, i, &video_at, &videos, &packed))
         .collect();
     let mut layered = false;
     let materials: Vec<Material> = graph
@@ -107,7 +109,7 @@ pub(super) fn scene(mut document: Document, options: &Options) -> Result<Scene, 
 /// Every `Geometry` that is a `Mesh`, read side by side.
 fn meshes(
     document: &mut Document,
-    options: &Options,
+    budget: &ReadBudget,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<Mesh>, Error> {
     let Some(objects) = document.nodes.iter_mut().find(|n| n.name == "Objects") else {
@@ -120,7 +122,7 @@ fn meshes(
         .map(Mutex::new)
         .collect();
     let read = parallel::map(nodes.len(), |i| {
-        options.check()?;
+        budget.check()?;
         let mut node = nodes[i].lock().unwrap_or_else(|e| e.into_inner());
         let (id, name) = (node.int(0).unwrap_or(0), object_name(&node).to_owned());
         mesh::read(id, &name, &mut node).map_err(|message| Error::malformed(At::Graph, message))
@@ -159,27 +161,59 @@ fn video(graph: &Graph, i: usize) -> Video {
     }
 }
 
-fn texture(graph: &Graph, i: usize, video_at: &HashMap<usize, usize>, videos: &[Video]) -> Texture {
+/// The first video packing each file, by its file name and by its
+/// relative one.
+struct Packed<'v> {
+    by_file: HashMap<&'v str, usize>,
+    by_relative: HashMap<&'v str, usize>,
+}
+
+impl<'v> Packed<'v> {
+    fn of(videos: &'v [Video]) -> Packed<'v> {
+        let mut packed = Packed {
+            by_file: HashMap::new(),
+            by_relative: HashMap::new(),
+        };
+        for (v, video) in videos.iter().enumerate().rev() {
+            if !video.content.is_empty() {
+                packed.by_file.insert(&video.file_name, v);
+                packed.by_relative.insert(&video.relative_file_name, v);
+            }
+        }
+        packed
+    }
+
+    /// The first video packing the file `video` names, by either name.
+    fn of_video(&self, video: &Video) -> Option<usize> {
+        let first = |map: &HashMap<&str, usize>, name: &str| {
+            (!name.is_empty()).then(|| map.get(name).copied()).flatten()
+        };
+        match (
+            first(&self.by_file, &video.file_name),
+            first(&self.by_relative, &video.relative_file_name),
+        ) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+}
+
+fn texture(
+    graph: &Graph,
+    i: usize,
+    video_at: &HashMap<usize, usize>,
+    videos: &[Video],
+    packed: &Packed<'_>,
+) -> Texture {
     let o = &graph.objects[i];
     let p = graph.properties(i);
     // A file embedded once serves every video naming it.
     let video = graph
         .children_of_class(i, "Video")
         .find_map(|v| video_at.get(&v).copied());
-    let video = video.map(|v| {
-        let named = |w: &Video| {
-            (!videos[v].file_name.is_empty() && w.file_name == videos[v].file_name)
-                || (!videos[v].relative_file_name.is_empty()
-                    && w.relative_file_name == videos[v].relative_file_name)
-        };
-        if videos[v].content.is_empty() {
-            videos
-                .iter()
-                .position(|w| !w.content.is_empty() && named(w))
-                .unwrap_or(v)
-        } else {
-            v
-        }
+    let video = video.map(|v| match videos[v].content.is_empty() {
+        true => packed.of_video(&videos[v]).unwrap_or(v),
+        false => v,
     });
     Texture {
         id: o.id,

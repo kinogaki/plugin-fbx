@@ -9,7 +9,8 @@ mod arrays;
 mod ascii;
 mod binary;
 
-use crate::fbx::{Error, Options};
+use crate::fbx::Error;
+use kinogaki_studio_api::format::ReadBudget;
 use std::borrow::Cow;
 
 /// A file's node tree.
@@ -86,7 +87,7 @@ impl Default for Array {
 
 /// Reads a binary or ASCII file's tree.
 pub fn parse(bytes: &[u8]) -> Result<Document, Error> {
-    parse_with(bytes, &Options::default())
+    parse_with(bytes, &ReadBudget::default())
 }
 
 /// How a file starting with `head` was written, when it is FBX: binary by
@@ -101,12 +102,12 @@ pub fn detect(head: &[u8]) -> Option<Format> {
     }
 }
 
-/// [`parse`] with budgets and cancellation.
-pub fn parse_with(bytes: &[u8], options: &Options) -> Result<Document, Error> {
+/// [`parse`] within `budget`, which also cancels it.
+pub fn parse_with(bytes: &[u8], budget: &ReadBudget) -> Result<Document, Error> {
     if bytes.starts_with(binary::MAGIC) {
-        binary::parse(bytes, options)
+        binary::parse(bytes, budget)
     } else if ascii::looks_like(bytes) {
-        ascii::parse(bytes, options)
+        ascii::parse(bytes, budget)
     } else {
         Err(Error::Unsupported("not an FBX file".into()))
     }

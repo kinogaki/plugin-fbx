@@ -15,7 +15,7 @@ pub enum Error {
     },
     /// The file is FBX this reader does not read (FBX 6, or newer than 7.x).
     Unsupported(String),
-    /// A size passed a [`crate::fbx::Limits`] budget.
+    /// The file asks more than the read's budget allows.
     TooLarge(String),
     /// The read was cancelled.
     Cancelled,
@@ -61,6 +61,16 @@ impl std::error::Error for Error {
         match self {
             Error::Io(error) => Some(error),
             _ => None,
+        }
+    }
+}
+
+/// The read's budget refusing: cancelled, or over a limit.
+impl From<kinogaki_studio_api::Error> for Error {
+    fn from(error: kinogaki_studio_api::Error) -> Self {
+        match error.is_cancelled() {
+            true => Error::Cancelled,
+            false => Error::TooLarge(error.message().to_owned()),
         }
     }
 }

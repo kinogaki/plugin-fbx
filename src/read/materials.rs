@@ -105,7 +105,7 @@ const PHYSICAL: [(&str, &str); 18] = [
 /// read, the color service and the meshes' UV set names.
 pub(super) struct Shading<'a, 's> {
     pub scene: &'s Scene,
-    pub files: &'a mut Files,
+    pub files: &'a mut Files<'s>,
     pub colors: &'a dyn ColorService,
     pub uv_sets: &'a [String],
 }

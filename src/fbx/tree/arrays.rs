@@ -1,11 +1,15 @@
 //! Arrays are decoded once the tree is read, all of them side by side: a
 //! binary array is a task (inflated when compressed), an ASCII array is cut
 //! at commas into tasks of about a megabyte. Each array takes the place its
-//! node kept for it. Budgets are checked from the headers, before anything
-//! is allocated.
+//! node kept for it. Each array is charged to the read's budget from its
+//! header, before anything is allocated: its elements, and the bytes it
+//! inflates to besides, which a compressed array's own bytes must be able
+//! to hold.
 use super::{Array, Node, Value};
-use crate::fbx::{Error, Limits, Options, error::At, parallel};
+use crate::fbx::{Error, error::At, parallel};
+use kinogaki_studio_api::format::ReadBudget;
 use std::ops::Range;
+use std::sync::atomic::AtomicBool;
 
 /// What an array's elements are.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,8 +62,26 @@ struct Slot {
 pub(super) struct Deferred<'a> {
     tasks: Vec<Task<'a>>,
     slots: Vec<Slot>,
-    limits: Limits,
+    budget: ReadBudget,
+    /// Bytes of the arrays' elements, together.
     total: usize,
+}
+
+/// Why an array isn't read: its header breaks the format, or the budget
+/// refuses what it asks.
+pub(super) enum Refused {
+    Malformed(String),
+    Budget(kinogaki_studio_api::Error),
+}
+
+impl Refused {
+    /// The refusal as the read's error, at `at`.
+    pub(super) fn at(self, at: At) -> Error {
+        match self {
+            Refused::Malformed(message) => Error::malformed(at, message),
+            Refused::Budget(e) => Error::from(e),
+        }
+    }
 }
 
 /// An ASCII array is cut into tasks of at least this many bytes.
@@ -68,15 +90,12 @@ const TEXT_TASK: usize = 1 << 20;
 /// Arrays decoding to fewer bytes than this decode on the calling thread.
 const SMALL: usize = 1 << 20;
 
-/// DEFLATE never expands more than this (258-byte matches in 2 bits).
-const MOST_INFLATION: usize = 1032;
-
 impl<'a> Deferred<'a> {
-    pub(super) fn new(limits: Limits) -> Self {
+    pub(super) fn new(budget: &ReadBudget) -> Self {
         Self {
             tasks: Vec::new(),
             slots: Vec::new(),
-            limits,
+            budget: budget.clone(),
             total: 0,
         }
     }
@@ -93,20 +112,27 @@ impl<'a> Deferred<'a> {
         compressed: bool,
         data: &'a [u8],
         at: usize,
-    ) -> Result<(), String> {
-        let bytes = self.reserve(count, kind.size())?;
+    ) -> Result<(), Refused> {
+        let bytes = count.saturating_mul(kind.size());
         if !compressed && data.len() != bytes {
-            return Err(format!(
+            return Err(Refused::Malformed(format!(
                 "an array of {count} elements holds {} bytes",
                 data.len()
-            ));
+            )));
         }
-        if compressed && bytes > data.len().saturating_mul(MOST_INFLATION) + MOST_INFLATION {
-            return Err(format!(
-                "{} compressed bytes can't hold {count} elements",
-                data.len()
-            ));
+        if compressed {
+            // Inflated beside its elements, from bytes that can hold them.
+            // More than DEFLATE can code is a broken file, not a large one.
+            let encoded = data.len() as u64;
+            (self.budget.expand(encoded, bytes as u64)).map_err(|e| match e.is_cancelled() {
+                true => Refused::Budget(e),
+                false => Refused::Malformed(format!(
+                    "{encoded} compressed bytes can't hold {count} elements"
+                )),
+            })?;
+            self.reserve(count, kind.size())?;
         }
+        self.reserve(count, kind.size())?;
         self.push(path, value, count, at, |tasks| {
             tasks.push(Task::Binary {
                 kind,
@@ -126,7 +152,7 @@ impl<'a> Deferred<'a> {
         count: usize,
         data: &'a [u8],
         at: usize,
-    ) -> Result<(), String> {
+    ) -> Result<(), Refused> {
         self.reserve(count, Kind::F64.size())?;
         self.push(path, value, count, at, |tasks| {
             let mut rest = data;
@@ -143,18 +169,12 @@ impl<'a> Deferred<'a> {
         Ok(())
     }
 
-    /// Bytes of `count` elements of `size`, within the budgets.
-    fn reserve(&mut self, count: usize, size: usize) -> Result<usize, String> {
-        let bytes = count
-            .checked_mul(size)
-            .filter(|&b| b <= self.limits.array_bytes)
-            .ok_or_else(|| format!("an array of {count} elements passes the array budget"))?;
-        self.total = self
-            .total
-            .checked_add(bytes)
-            .filter(|&t| t <= self.limits.total_bytes)
-            .ok_or("the arrays pass the total budget")?;
-        Ok(bytes)
+    /// Charges `count` elements of `size` to the budget.
+    fn reserve(&mut self, count: usize, size: usize) -> Result<(), Refused> {
+        let bytes = count.saturating_mul(size);
+        (self.budget.allocate(bytes as u64)).map_err(Refused::Budget)?;
+        self.total = self.total.saturating_add(bytes);
+        Ok(())
     }
 
     fn push(
@@ -181,13 +201,14 @@ impl<'a> Deferred<'a> {
     pub(super) fn decode_into(
         self,
         nodes: &mut [Node],
-        options: &Options,
+        budget: &ReadBudget,
         locate: impl Fn(usize) -> At,
     ) -> Result<(), Error> {
         let tasks = &self.tasks;
+        let stop = budget.cancel().shared_flag();
         let task = |i: usize| {
-            options.check()?;
-            Ok(decode(&tasks[i]))
+            budget.check()?;
+            Ok(decode(&tasks[i], &stop))
         };
         // A few small arrays decode faster than threads start.
         let decoded = if self.total < SMALL {
@@ -196,6 +217,7 @@ impl<'a> Deferred<'a> {
             parallel::map(tasks.len(), task)
         };
         let mut decoded = decoded.into_iter().collect::<Result<Vec<_>, Error>>()?;
+        budget.check()?;
         for slot in self.slots {
             let pieces = decoded[slot.tasks]
                 .iter_mut()
@@ -212,24 +234,26 @@ impl<'a> Deferred<'a> {
 /// A task's elements, or why they are wrong.
 type Piece = Result<Array, String>;
 
-fn decode(task: &Task) -> Piece {
+/// A task's elements; an inflation stops once `stop` is raised (the read
+/// cancelled), which the read then says.
+fn decode(task: &Task, stop: &AtomicBool) -> Piece {
     match *task {
         Task::Binary {
             kind,
             count,
             compressed,
             data,
-        } => binary(kind, count, compressed, data),
+        } => binary(kind, count, compressed, data, stop),
         Task::Text { data } => numbers(data),
     }
 }
 
 /// A binary array's elements.
-fn binary(kind: Kind, count: usize, compressed: bool, data: &[u8]) -> Piece {
+fn binary(kind: Kind, count: usize, compressed: bool, data: &[u8], stop: &AtomicBool) -> Piece {
     let bytes = count * kind.size();
     let inflated;
     let data = if compressed {
-        inflated = kinogaki_deflate::zlib_decompress(data, bytes)
+        inflated = kinogaki_deflate::zlib_decompress_until(data, bytes, stop)
             .map_err(|e| format!("a compressed array: {e}"))?;
         &inflated[..]
     } else {

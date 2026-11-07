@@ -8,30 +8,28 @@ use crate::fbx::{Property, Texture, Video, Wrap};
 use kinogaki_mtlx::{NodeDef, Type, library};
 use kinogaki_studio_api::Value;
 use kinogaki_studio_api::color::ColorService;
+use kinogaki_studio_api::format::files::Named;
 use kinogaki_studio_api::geometry::image::{EmbeddedFile, ImageColor, ImageFile, ImageSource};
 use kinogaki_studio_api::image_files::image_node;
 use kinogaki_studio_api::network::{NetworkSeed, NewNode};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 /// The files a scene's textures read: each video's, embedded where the
 /// file packs it (its bytes moved out of the scene, never copied), else
-/// found on disk (`RelativeFilename` beside the file, then `FileName`) and
-/// kept as a path, or read in with Embed Textures.
-pub(super) struct Files {
+/// reached through [`Named`] (`RelativeFilename` where the file gives one,
+/// else `FileName`) and kept as a path, or read in with Embed Textures.
+pub(super) struct Files<'n> {
     /// Each video's file, by its index in the scene.
     videos: Vec<Option<ImageFile>>,
-    folder: Option<PathBuf>,
-    embed: bool,
-    /// What could not be read, one line each.
-    pub warnings: Vec<String>,
+    named: &'n Named,
 }
 
-impl Files {
-    /// The files of `videos` (their embedded bytes taken), of a file in
-    /// `folder` (none: one in memory).
-    pub fn new(videos: &mut [Video], folder: Option<&Path>, embed: bool) -> Files {
+impl<'n> Files<'n> {
+    /// The files of `videos` (their embedded bytes taken), the files on disk
+    /// reached through `named`.
+    pub fn new(videos: &mut [Video], named: &'n Named) -> Files<'n> {
         let videos = (videos.iter_mut())
             .map(|v| {
                 let content = std::mem::take(&mut v.content);
@@ -39,46 +37,20 @@ impl Files {
                     .then(|| ImageFile::Embedded(EmbeddedFile::new(name_of(v), content)))
             })
             .collect();
-        Files {
-            videos,
-            folder: folder.map(Path::to_path_buf),
-            embed,
-            warnings: Vec::new(),
-        }
+        Files { videos, named }
     }
 
-    /// The file `texture` reads.
-    pub fn file(&mut self, texture: &Texture) -> ImageFile {
+    /// The file `texture` reads; none for one out of reach, which `named`
+    /// says.
+    pub fn file(&mut self, texture: &Texture) -> Option<ImageFile> {
         if let Some(Some(file)) = texture.video.and_then(|v| self.videos.get(v)) {
-            return file.clone();
+            return Some(file.clone());
         }
-        let beside = (self.folder.as_ref())
-            .filter(|_| !texture.relative_file_name.is_empty())
-            .map(|f| f.join(texture.relative_file_name.trim_start_matches(['/', '\\'])));
-        let absolute = Some(PathBuf::from(&texture.file_name)).filter(|p| p.is_absolute());
-        let found = beside
-            .iter()
-            .chain(&absolute)
-            .find(|p| p.is_file())
-            .cloned();
-        let path = found
-            .or(beside)
-            .or(absolute)
-            .unwrap_or_else(|| PathBuf::from(&texture.file_name));
-        if self.embed {
-            match std::fs::read(&path) {
-                Ok(bytes) => {
-                    let name = path
-                        .file_name()
-                        .map_or("image".into(), |n| n.to_string_lossy());
-                    return ImageFile::Embedded(EmbeddedFile::new(&name, bytes));
-                }
-                Err(e) => self
-                    .warnings
-                    .push(format!("{}: {e}, kept as a path", path.display())),
-            }
-        }
-        ImageFile::Path(Arc::from(path.to_string_lossy().as_ref()))
+        let name = match texture.relative_file_name.trim_start_matches(['/', '\\']) {
+            "" => &texture.file_name,
+            relative => relative,
+        };
+        self.named.image(name, None)
     }
 }
 
@@ -180,7 +152,7 @@ impl<'a> Network<'a> {
     pub fn texture(
         &mut self,
         texture: &Texture,
-        files: &mut Files,
+        files: &mut Files<'_>,
         sampler: Sampler,
         ty: &Type,
         uv_sets: &[String],
@@ -189,19 +161,21 @@ impl<'a> Network<'a> {
             true => ImageColor::Auto,
             false => ImageColor::Data,
         };
-        let source = ImageSource::new(files.file(texture), color);
-        let image = match self.images.iter().find(|(s, _)| *s == source) {
-            Some((_, at)) => *at,
-            None => {
-                let stem = Path::new(source.name())
-                    .file_stem()
-                    .map_or("Image".into(), |s| s.to_string_lossy());
-                let name = self.unique(&stem);
-                let at = self.seed.node(image_node::reading(&source).named(name));
-                self.images.push((source, at));
-                at
+        let image = files.file(texture).map(|file| {
+            let source = ImageSource::new(file, color);
+            match self.images.iter().find(|(s, _)| *s == source) {
+                Some((_, at)) => *at,
+                None => {
+                    let stem = Path::new(source.name())
+                        .file_stem()
+                        .map_or("Image".into(), |s| s.to_string_lossy());
+                    let name = self.unique(&stem);
+                    let at = self.seed.node(image_node::reading(&source).named(name));
+                    self.images.push((source, at));
+                    at
+                }
             }
-        };
+        });
         let wrap = |w: Wrap| -> Value {
             let mode = match w {
                 Wrap::Repeat => "periodic",
@@ -227,7 +201,9 @@ impl<'a> Network<'a> {
         };
         self.set(at, u, wrap(texture.wrap[0]));
         self.set(at, v, wrap(texture.wrap[1]));
-        self.seed.wire(image, image_node::IMAGE, at, "file");
+        if let Some(image) = image {
+            self.seed.wire(image, image_node::IMAGE, at, "file");
+        }
         self.coordinates(at, texture, sampler, uv_sets);
         (at, output)
     }
@@ -304,9 +280,12 @@ impl<'a> Network<'a> {
     }
 
     /// An Image node reading `texture`'s file, wired into nothing: a map
-    /// the material keeps but doesn't use.
-    pub fn unused(&mut self, texture: &Texture, files: &mut Files) {
-        let source = ImageSource::new(files.file(texture), ImageColor::Auto);
+    /// the material keeps but doesn't use (none for a file out of reach).
+    pub fn unused(&mut self, texture: &Texture, files: &mut Files<'_>) {
+        let Some(file) = files.file(texture) else {
+            return;
+        };
+        let source = ImageSource::new(file, ImageColor::Auto);
         if !self.images.iter().any(|(s, _)| *s == source) {
             let name = self.unique(&texture.name);
             let at = self.seed.node(image_node::reading(&source).named(name));

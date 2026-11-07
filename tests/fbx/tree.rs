@@ -3,7 +3,9 @@
 
 use crate::common::{Random, ascii, binary, fixture, fixtures, node, s};
 use kinogaki_fbx::fbx::tree::{self, Array, Format, Node, Value};
-use kinogaki_fbx::fbx::{self, Error, Limits, Options};
+use kinogaki_fbx::fbx::{self, Error};
+use kinogaki_studio_api::CancelToken;
+use kinogaki_studio_api::format::{ReadBudget, ReadLimits};
 
 /// A tree with every kind of value.
 fn sample() -> Vec<Node> {
@@ -233,13 +235,10 @@ fn hostile_array_headers_fail_before_allocating() {
             assert!(matches!(error, Error::Malformed { .. }), "{lie}: {error}");
         }
     }
-    let small = Options {
-        limits: Limits {
-            array_bytes: 16,
-            ..Limits::default()
-        },
-        ..Options::default()
-    };
+    let small = ReadBudget::new(ReadLimits {
+        allocation: 16,
+        ..ReadLimits::default()
+    });
     let error = tree::parse_with(&binary(&tree, 7400, true), &small).unwrap_err();
     assert!(error.to_string().contains("budget"), "{error}");
     let ascii_lie = "; FBX 7.4.0 project file\nA: *3 {\n\ta: 1,2\n}\n";
@@ -252,7 +251,7 @@ fn hostile_array_headers_fail_before_allocating() {
 #[test]
 fn deep_nesting_passes_the_depth_budget_as_an_error() {
     let mut deep = node("Leaf", vec![], vec![]);
-    for _ in 0..100 {
+    for _ in 0..300 {
         deep = node("N", vec![], vec![deep]);
     }
     for bytes in [
@@ -307,10 +306,9 @@ fn mutated_files_never_panic() {
 
 #[test]
 fn reading_stops_when_cancelled() {
-    let cancelled = Options {
-        cancelled: &|| true,
-        ..Options::default()
-    };
+    let token = CancelToken::default();
+    token.cancel();
+    let cancelled = ReadBudget::default().cancelled_by(token);
     for name in ["houdini/box_7700.fbx", "houdini/box_7700_ascii.fbx"] {
         assert!(matches!(
             fbx::read_with(&fixture(name), &cancelled),

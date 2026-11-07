@@ -17,16 +17,15 @@ mod textures;
 
 use crate::fbx::{self, Attribute, Light, Matrix, Model, Scene};
 use geometry::Shaping;
-use kinogaki_studio_api::format::options;
+use kinogaki_studio_api::format::files::Named;
 use kinogaki_studio_api::geometry::{self as values, Attributes, Domain, Text, Vec3, Xform, names};
 use kinogaki_studio_api::standard::{self, Instances, Materials};
 use kinogaki_studio_api::{
-    Data, Diagnostic, Error, FileItem, FormatOptions, Imported, Input, Reading, Value,
+    Data, Diagnostic, Error, FileItem, FormatOptions, Imported, Input, Reading,
 };
 use materials::Shading;
 use space::{Space, frame};
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::Path;
 use std::sync::Arc;
 use textures::Files;
 
@@ -37,23 +36,14 @@ pub(crate) fn read(
     reading: &Reading<'_>,
 ) -> Result<Imported, Error> {
     reading.check()?;
-    let embed = options::option(chosen, options::EMBED, Value::bool)?;
     let bytes = input.bytes()?;
-    let stop = || reading.cancel.is_cancelled();
-    let options = fbx::Options {
-        cancelled: &stop,
-        ..fbx::Options::default()
-    };
-    let mut scene = fbx::read_with(&bytes, &options).map_err(|e| failed(input, e))?;
+    let mut scene = fbx::read_with(&bytes, &reading.budget).map_err(|e| failed(input, e))?;
     drop(bytes);
     reading.check()?;
     let space = Space::new(&scene.settings, reading.units);
     let mut said: BTreeSet<String> = std::mem::take(&mut scene.warnings).into_iter().collect();
-    let mut files = Files::new(
-        &mut scene.videos,
-        input.path().and_then(Path::parent),
-        embed,
-    );
+    let named = Named::new(input, chosen, reading);
+    let mut files = Files::new(&mut scene.videos, &named);
     let keys = keys(&scene);
     let uv_sets = uv_sets(&scene);
     let mut looks = Materials::default();
@@ -69,13 +59,14 @@ pub(crate) fn read(
         said.extend(approximated);
         looks.materials.push(material);
     }
-    said.extend(std::mem::take(&mut files.warnings));
+    said.extend(named.warnings().into_iter().map(|w| w.message));
     let mut walk = Walk {
         scene: &scene,
         space,
         shaping: Shaping {
             colors: reading.colors,
             keys: &keys,
+            budget: &reading.budget,
         },
         worlds: scene.world_matrices(),
         users: users(&scene),
@@ -120,16 +111,19 @@ fn failed(input: &Input<'_>, e: fbx::Error) -> Error {
     }
 }
 
-/// Each material's key: its name, made unique.
+/// Each material's key: its name, made unique (`name_1`, `name_2`…), each
+/// name's copies counted from the last one taken, so many of one name cost
+/// no more than many names.
 fn keys(scene: &Scene) -> Vec<Arc<str>> {
     let mut taken = HashSet::new();
+    let mut copies: HashMap<&str, usize> = HashMap::new();
     (scene.materials.iter())
         .map(|m| {
             let mut key = m.name.clone();
-            let mut copy = 1;
             while !taken.insert(key.clone()) {
+                let copy = copies.entry(&m.name).or_insert(0);
+                *copy += 1;
                 key = format!("{}_{copy}", m.name);
-                copy += 1;
             }
             Arc::from(key)
         })

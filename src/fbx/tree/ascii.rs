@@ -8,7 +8,8 @@
 //! parsed side by side afterwards.
 use super::arrays::{Deferred, float};
 use super::{Document, Format, Node, Value};
-use crate::fbx::{Error, Options, error::At};
+use crate::fbx::{Error, error::At};
+use kinogaki_studio_api::format::ReadBudget;
 
 /// Whether `bytes` read as an ASCII FBX file: its comment line, or its
 /// header node near the start.
@@ -19,7 +20,7 @@ pub(super) fn looks_like(bytes: &[u8]) -> bool {
         || head.windows(19).any(|w| w == b"FBXHeaderExtension:")
 }
 
-pub(super) fn parse(bytes: &[u8], options: &Options) -> Result<Document, Error> {
+pub(super) fn parse(bytes: &[u8], budget: &ReadBudget) -> Result<Document, Error> {
     let start = if bytes.starts_with(b"\xEF\xBB\xBF") {
         3
     } else {
@@ -29,12 +30,12 @@ pub(super) fn parse(bytes: &[u8], options: &Options) -> Result<Document, Error> 
         bytes,
         at: start,
         path: Vec::new(),
-        arrays: Deferred::new(options.limits),
-        options,
+        arrays: Deferred::new(budget),
+        budget,
     };
     let mut nodes = parser.nodes(0)?;
     let Parser { arrays, .. } = parser;
-    arrays.decode_into(&mut nodes, options, |at| At::Line(line(bytes, at)))?;
+    arrays.decode_into(&mut nodes, budget, |at| At::Line(line(bytes, at)))?;
     let version = nodes
         .iter()
         .find(|n| n.name == "FBXHeaderExtension")
@@ -77,7 +78,7 @@ struct Parser<'a, 'o> {
     /// Child indices down to the node being read, for its arrays.
     path: Vec<u32>,
     arrays: Deferred<'a>,
-    options: &'o Options<'o>,
+    budget: &'o ReadBudget,
 }
 
 impl<'a> Parser<'a, '_> {
@@ -107,8 +108,11 @@ impl<'a> Parser<'a, '_> {
 
     /// Nodes up to the end of the file (`depth` 0) or a closing `}`.
     fn nodes(&mut self, depth: usize) -> Result<Vec<Node>, Error> {
-        if depth > self.options.limits.depth {
-            return Err(self.error(self.at, "nodes nest deeper than the depth budget"));
+        if let Err(e) = self.budget.nest(depth) {
+            return Err(match e.is_cancelled() {
+                true => Error::Cancelled,
+                false => self.error(self.at, e.message()),
+            });
         }
         let mut nodes = Vec::new();
         loop {
@@ -122,7 +126,7 @@ impl<'a> Parser<'a, '_> {
                 }
                 Some(b) if b.is_ascii_alphanumeric() || b == b'_' => {
                     if depth == 0 {
-                        self.options.check()?;
+                        self.budget.check()?;
                     }
                     self.path.push(nodes.len() as u32);
                     let node = self.node(depth)?;
@@ -265,7 +269,7 @@ impl<'a> Parser<'a, '_> {
         self.at = data_start + len + 1;
         self.arrays
             .text(&self.path, index, count, data, start)
-            .map_err(|message| self.error(start, message))?;
+            .map_err(|why| why.at(At::Line(line(self.bytes, start))))?;
         Ok(Value::Array(super::Array::default()))
     }
 }

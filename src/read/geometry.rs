@@ -8,6 +8,7 @@ use super::space::determinant;
 use crate::fbx::{Layer, Mapping, Mesh};
 use kinogaki_studio_api::Error;
 use kinogaki_studio_api::color::ColorService;
+use kinogaki_studio_api::format::ReadBudget;
 use kinogaki_studio_api::geometry::{
     Attribute, Attributes, Column, Domain, Elements, Geometry, Meaning, Primitives, Text, Vec3,
     Xform, names,
@@ -18,11 +19,14 @@ use std::sync::Arc;
 /// The space FBX's colors are taken to be in: linear Rec.709.
 pub(super) const COLORS: &str = "lin_rec709_scene";
 
-/// What making geometry needs: the color service, and each material's key
-/// by its index in the scene.
+/// What making geometry needs: the color service, each material's key by
+/// its index in the scene, and the read's budget, which each mesh made is
+/// charged to (a mesh several nodes show in their own materials is made
+/// for each).
 pub(super) struct Shaping<'a> {
     pub colors: &'a dyn ColorService,
     pub keys: &'a [Arc<str>],
+    pub budget: &'a ReadBudget,
 }
 
 /// The polygons kept and where each kept corner was in the file.
@@ -43,6 +47,11 @@ pub(super) fn mesh(
     cx: &Shaping<'_>,
     warnings: &mut Vec<String>,
 ) -> Result<Geometry, Error> {
+    // Its points and corners, and what its layers spread over them.
+    let corners = mesh.corners.len() as u64;
+    let made = (mesh.point_count() as u64).saturating_mul(24);
+    cx.budget
+        .allocate(made.saturating_add(corners.saturating_mul(32)))?;
     let mirrored = determinant(at) < 0.0;
     let kept = kept(mesh, mirrored);
     let dropped = mesh.polygon_count() - kept.faces.len();
@@ -129,11 +138,22 @@ pub(super) fn mesh(
     edges(geometry, mesh, &kept)
 }
 
+/// Whether `corners` names a point twice: by pairs for a few, by sorting
+/// for many (a polygon of 200,000 corners).
+fn repeats(corners: &[u32]) -> bool {
+    if corners.len() <= 16 {
+        return (1..corners.len()).any(|i| corners[..i].contains(&corners[i]));
+    }
+    let mut sorted = corners.to_vec();
+    sorted.sort_unstable();
+    sorted.windows(2).any(|w| w[0] == w[1])
+}
+
 /// The polygons to keep, and their corners in the order they keep them.
 fn kept(mesh: &Mesh, mirrored: bool) -> Kept {
     let fits = |f: usize| {
         let corners = &mesh.corners[mesh.polygon(f)];
-        corners.len() >= 3 && !(1..corners.len()).any(|i| corners[..i].contains(&corners[i]))
+        corners.len() >= 3 && !repeats(corners)
     };
     let faces: Vec<u32> = (0..mesh.polygon_count())
         .filter(|&f| fits(f))

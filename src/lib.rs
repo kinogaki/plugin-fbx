@@ -75,13 +75,19 @@ impl FileFormat for Fbx {
         &*TYPES
     }
     /// Textures on disk stay paths unless embedded; embedded media are
-    /// embedded whatever it says.
+    /// embedded whatever it says. Read Files Outside the Folder, off.
     fn options(&self) -> FormatOptions {
-        FormatOptions::from([(options::EMBED.to_owned(), Value::Bool(false))])
+        FormatOptions::from([
+            (options::EMBED.to_owned(), Value::Bool(false)),
+            (options::OUTSIDE.to_owned(), Value::Bool(false)),
+        ])
     }
     fn schema(&self, chosen: &FormatOptions, _: Purpose) -> Schema {
-        let embed = options::option(chosen, options::EMBED, Value::bool).unwrap_or(false);
-        options::embed(Schema::default(), embed)
+        let on = |name| options::option(chosen, name, Value::bool).unwrap_or(false);
+        options::outside(
+            options::embed(Schema::default(), on(options::EMBED)),
+            on(options::OUTSIDE),
+        )
     }
     fn read(
         &self,

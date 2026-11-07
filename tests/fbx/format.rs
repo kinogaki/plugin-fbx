@@ -456,8 +456,9 @@ fn a_texture_under_a_property_reaches_its_input_placed_and_wrapped() {
         .find(|n| n.node_type == IMAGE_NODE)
         .unwrap();
     let source = image_source(&file.parameters).unwrap().unwrap();
-    // A file in memory names no folder: the file's own path.
-    assert_eq!(source.name(), "/maps/wood.png");
+    // A file in memory names nothing on disk: its relative name stays as
+    // written, for the project's folder to find.
+    assert_eq!(source.name(), "maps/wood.png");
 }
 
 #[test]
@@ -476,7 +477,7 @@ fn damaged_files_fail_and_a_cancelled_read_stops() {
     let stop = CancelToken::default();
     stop.cancel();
     let cancelled = Reading {
-        cancel: stop,
+        budget: kinogaki_studio_api::format::ReadBudget::default().cancelled_by(stop),
         ..Reading::new(Purpose::Objects, metres(), &Unconverted)
     };
     let input = Input::memory("box.fbx", &bytes);

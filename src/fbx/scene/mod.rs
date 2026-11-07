@@ -18,8 +18,9 @@ pub use settings::{Axes, Direction, Settings};
 pub use shading::{Family, Material, Texture, TextureLink, Video, Wrap};
 pub use transform::{Geometric, Inherit, Matrix, RotationOrder, Transform};
 
+use crate::fbx::Error;
 use crate::fbx::tree::{Document, Format};
-use crate::fbx::{Error, Options};
+use kinogaki_studio_api::format::ReadBudget;
 use transform::Placed;
 
 /// A file's scene, read at one time (no animation).
@@ -95,8 +96,8 @@ pub enum Attribute {
 
 impl Scene {
     /// The scene in `document`, its arrays moved out of it.
-    pub fn from_document(document: Document, options: &Options) -> Result<Scene, Error> {
-        build::scene(document, options)
+    pub fn from_document(document: Document, budget: &ReadBudget) -> Result<Scene, Error> {
+        build::scene(document, budget)
     }
 
     /// Each node's placement in the scene, in file units and axes: its
