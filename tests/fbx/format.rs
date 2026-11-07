@@ -384,6 +384,30 @@ fn each_shader_family_lands_in_its_model() {
 }
 
 #[test]
+fn a_materials_lengths_move_into_the_projects_units() {
+    let int = |i: i64| Raw::Int(i);
+    // 3ds Max's Physical material: its transmission depth, 2 file units
+    // (centimetres), is Standard Surface's in metres.
+    let physical = vec![
+        p("3dsMax|ClassIDa", "int", vec![int(0x3d6b_1cec)]),
+        p(
+            "3dsMax|ClassIDb",
+            "int",
+            vec![int(0xdead_c001_u32 as i32 as i64)],
+        ),
+        p("3dsMax|Parameters|trans_depth", "Float", vec![float(2.0)]),
+    ];
+    let bytes = family_file("Physical", "unknown", physical, vec![], vec![]);
+    let read = read_in("glass.fbx", &bytes, metres());
+    let m = &looks(&read).materials[0];
+    let surface = of_node(&m.inside, "standard_surface").unwrap();
+    let Some(Value::Number(depth)) = surface.parameters.get("transmission_depth") else {
+        panic!("{:?}", surface.parameters);
+    };
+    assert!((depth - 0.02).abs() < 1e-12, "{depth}");
+}
+
+#[test]
 fn a_mesh_two_nodes_show_is_held_once_each_naming_its_material() {
     let objects = vec![
         triangle(1, vec![]),

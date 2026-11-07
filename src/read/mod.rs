@@ -55,7 +55,14 @@ pub(crate) fn read(
             colors: reading.colors,
             uv_sets: &uv_sets,
         };
-        let (material, approximated) = materials::material(m, key, &mut shading);
+        let (mut material, approximated) = materials::material(m, key, &mut shading);
+        let unconverted = material.inside.scale_lengths(space.scale);
+        if unconverted > 0 {
+            said.insert(format!(
+                "{}: {unconverted} lengths driven by textures keep the file's units",
+                material.name
+            ));
+        }
         said.extend(approximated);
         looks.materials.push(material);
     }
