@@ -3,6 +3,7 @@
 kinogaki-fbx/doc test plugins/fbx/src/lib.rs -
 kinogaki-fbx/fbx hand measure::hand_run_a_million_triangles_read_within_the_budget
 kinogaki-fbx/fbx test format::a_materials_lengths_move_into_the_projects_units
+kinogaki-fbx/fbx test format::a_mesh_nodes_give_other_materials_is_held_once_with_their_maps
 kinogaki-fbx/fbx test format::a_mesh_two_nodes_show_is_held_once_each_naming_its_material
 kinogaki-fbx/fbx test format::a_texture_under_a_property_reaches_its_input_placed_and_wrapped
 kinogaki-fbx/fbx test format::a_z_up_export_lands_on_the_y_up_one_and_a_left_handed_one_faces_out

@@ -26,7 +26,7 @@ use kinogaki_studio_api::{
 };
 use materials::Shading;
 use space::{frame, shown};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use textures::Files;
 
@@ -236,8 +236,12 @@ impl Walk<'_> {
     }
 
     /// An instance of shared mesh `k` where `model` places it: the mesh
-    /// held once; the node's own material on the Instance domain where its
-    /// slots give one other material; its own copy where they give several.
+    /// held once, made with the materials of the first node showing it; the
+    /// node's own material on the Instance domain where its one slot gives
+    /// another, its `material_map` where its slots give others (each slot's
+    /// material in the mesh, then the node's); its own copy where the mesh
+    /// names one material in two slots the node gives two, or the node gives
+    /// another count of slots.
     fn instance(&mut self, k: usize, model: &Model) -> Result<Option<Data>, Error> {
         let scene = self.scene;
         if !self.shared.contains_key(&k) {
@@ -266,6 +270,24 @@ impl Walk<'_> {
                     values::Attribute::text(text),
                 )?
             }
+            (held, own) if held.len() == own.len() && distinct(held, self.shaping.keys) => {
+                let key = |m: &usize| &*self.shaping.keys[*m];
+                let pairs: Vec<&str> = (held.iter().zip(own))
+                    .filter(|(h, o)| key(h) != key(o))
+                    .flat_map(|(h, o)| [key(h), key(o)])
+                    .collect();
+                let ty = values::AttributeType {
+                    array: true,
+                    ..values::AttributeType::TEXT
+                };
+                let offsets = vec![0, pairs.len() as u32].into();
+                let text = values::Values::Text(Text::from_strs(pairs));
+                Attributes::new().with(
+                    Domain::Instance,
+                    names::MATERIAL_MAP,
+                    values::Attribute::arrays(ty, offsets, text)?,
+                )?
+            }
             _ => {
                 let at = shown(&self.space, &model.geometric.matrix());
                 let mesh = geometry::mesh(
@@ -286,4 +308,10 @@ impl Walk<'_> {
         let instances = Instances::new(vec![prototype], at, None, attributes)?;
         Ok(Some(standard::instances().wrap(instances)))
     }
+}
+
+/// Whether `slots` name each material key of `keys` once.
+fn distinct(slots: &[usize], keys: &[Arc<str>]) -> bool {
+    let mut seen = HashSet::new();
+    slots.iter().all(|&m| seen.insert(&keys[m]))
 }

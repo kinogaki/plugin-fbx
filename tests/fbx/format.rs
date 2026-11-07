@@ -5,7 +5,7 @@
 //! their cameras and lights; every shader family's material in its model;
 //! a mesh two nodes show held once; damaged files and a cancelled read.
 use crate::common::{binary, fixture, node, p, s};
-use crate::graph::{document, float, material, object, oo, op, triangle};
+use crate::graph::{document, float, floats, ints, material, object, oo, op, triangle};
 use kinogaki_fbx::Fbx;
 use kinogaki_fbx::fbx::tree::{Node, Value as Raw};
 use kinogaki_render_api::material::mtlx::SIGNATURE;
@@ -439,6 +439,88 @@ fn a_mesh_two_nodes_show_is_held_once_each_naming_its_material() {
         .text(Domain::Instance, names::MATERIAL)
         .unwrap();
     assert_eq!(named.get(0), Some("Blue"));
+}
+
+/// A mesh of two polygons in two material slots, shown by a node giving
+/// them Red and Green and one giving them Blue and Red: held once, the
+/// second node's instance mapping each of the mesh's materials to its own.
+#[test]
+fn a_mesh_nodes_give_other_materials_is_held_once_with_their_maps() {
+    use kinogaki_studio_api::geometry::Values;
+    let slots = node(
+        "LayerElementMaterial",
+        vec![Raw::Int(0)],
+        vec![
+            node("MappingInformationType", vec![s("ByPolygon")], vec![]),
+            node("ReferenceInformationType", vec![s("IndexToDirect")], vec![]),
+            node("Materials", vec![ints(&[0, 1])], vec![]),
+        ],
+    );
+    let mesh = node(
+        "Geometry",
+        vec![Raw::Int(1), s("Geometry::Two"), s("Mesh")],
+        vec![
+            node(
+                "Vertices",
+                vec![floats(&[
+                    0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0,
+                ])],
+                vec![],
+            ),
+            node(
+                "PolygonVertexIndex",
+                vec![ints(&[0, 1, !2, 0, 2, !3])],
+                vec![],
+            ),
+            slots,
+        ],
+    );
+    let objects = vec![
+        mesh,
+        object("Model", 2, "A", "Mesh", vec![], vec![]),
+        object("Model", 3, "B", "Mesh", vec![], vec![]),
+        material(4, "Red", "phong", vec![]),
+        material(5, "Green", "phong", vec![]),
+        material(6, "Blue", "phong", vec![]),
+    ];
+    let connections = vec![
+        oo(2, 0),
+        oo(3, 0),
+        oo(1, 2),
+        oo(1, 3),
+        oo(4, 2),
+        oo(5, 2),
+        oo(6, 3),
+        oo(4, 3),
+    ];
+    let bytes = binary(&document(objects, connections), 7400, true);
+    let read = read_in("mapped.fbx", &bytes, metres());
+    let [a, b] = ["A", "B"].map(|name| {
+        let data = item(&read, name).data.clone().expect("an instance");
+        standard::instances().get(&data).expect("instances").clone()
+    });
+    assert!(
+        a.prototypes()[0].ptr_eq(&b.prototypes()[0]),
+        "one mesh, held once"
+    );
+    assert!(
+        a.attributes()
+            .get(Domain::Instance, names::MATERIAL_MAP)
+            .is_none()
+    );
+    let map = b
+        .attributes()
+        .get(Domain::Instance, names::MATERIAL_MAP)
+        .expect("a map");
+    let Values::Text(text) = map.values() else {
+        panic!("text");
+    };
+    let pairs: Vec<&str> = (0..text.len()).filter_map(|k| text.get(k)).collect();
+    assert_eq!(pairs, ["Red", "Blue", "Green", "Red"]);
+    assert_eq!(
+        map.offsets().map(|o| o.as_slice().to_vec()),
+        Some(vec![0, 4])
+    );
 }
 
 #[test]

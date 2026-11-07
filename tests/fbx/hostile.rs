@@ -149,7 +149,9 @@ fn a_polygon_of_two_hundred_thousand_corners_is_checked_in_n_log_n() {
 #[test]
 fn a_mesh_copied_for_each_node_is_charged_for_each() {
     // 378 KB once made 312 MB: a mesh shown by hundreds of nodes, each in
-    // two materials of its own, made again for each.
+    // materials of its own, made again for each. Nodes giving its two slots
+    // two others hold it once and map them; nodes giving it another count
+    // of slots than the first still copy it, each charged.
     let n = 20_000;
     let points: Vec<f64> = (0..n)
         .flat_map(|k| [k as f64, 0.0, (k % 3) as f64])
@@ -174,24 +176,33 @@ fn a_mesh_copied_for_each_node_is_charged_for_each() {
             layer,
         ],
     );
-    let mut objects = vec![mesh];
-    let mut links = Vec::new();
-    for k in 0..300 {
-        let id = 1_000 + 3 * k;
-        objects.push(object(
-            "Model",
-            id,
-            &format!("M{k}"),
-            "Mesh",
-            vec![],
-            vec![],
-        ));
-        objects.push(material(id + 1, &format!("A{k}"), "phong", vec![]));
-        objects.push(material(id + 2, &format!("B{k}"), "phong", vec![]));
-        links.extend([oo(id, 0), oo(100, id), oo(id + 1, id), oo(id + 2, id)]);
-    }
-    let bytes = binary(&document(objects, links), 7400, true);
-    let why = read(&bytes, total(64 << 20)).unwrap_err();
+    // 300 nodes, each in two materials of its own, past the first in
+    // `more` more.
+    let file = |more: usize| {
+        let mut objects = vec![mesh.clone()];
+        let mut links = Vec::new();
+        for k in 0..300 {
+            let id = 1_000 + 4 * k;
+            objects.push(object(
+                "Model",
+                id,
+                &format!("M{k}"),
+                "Mesh",
+                vec![],
+                vec![],
+            ));
+            let own = if k == 0 { 2 } else { 2 + more };
+            for m in 0..own {
+                let name = format!("{}{k}", ["A", "B", "C"][m]);
+                objects.push(material(id + 1 + m as i64, &name, "phong", vec![]));
+                links.push(oo(id + 1 + m as i64, id));
+            }
+            links.extend([oo(id, 0), oo(100, id)]);
+        }
+        binary(&document(objects, links), 7400, true)
+    };
+    assert!(read(&file(0), total(64 << 20)).is_ok(), "held once, mapped");
+    let why = read(&file(1), total(64 << 20)).unwrap_err();
     assert!(why.message().contains("over the read's budget"), "{why}");
 }
 
