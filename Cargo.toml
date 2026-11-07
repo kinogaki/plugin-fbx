@@ -1,0 +1,23 @@
+[package]
+name = "kinogaki-fbx"
+description = "FBX as a read-only format plugin for Kinogaki Studio: binary (7.1-7.7) and ASCII FBX read into a plain scene of nodes, meshes with their layers, cameras, lights, materials, textures and embedded media"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+license = "MIT OR Apache-2.0"
+
+# The format builds from its own repository and lib-image's alone, checked
+# out side by side as Studio's tree lays them out (README "Building"): its
+# manifest names everything it needs instead of inheriting it from the tree.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+[dependencies]
+# Compressed arrays are zlib streams (lib-image's DEFLATE).
+kinogaki-deflate = { path = "../../libs/lib-image/crates/deflate" }

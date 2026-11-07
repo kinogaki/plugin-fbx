@@ -1,0 +1,2 @@
+# Test files are read byte for byte, ASCII ones too.
+*.fbx binary

@@ -1,0 +1,23 @@
+Kinogaki FBX reader
+
+The code of this repository is original. It was written with two open-source
+FBX readers open as references for how the format behaves; no code was copied
+from either, and neither is a dependency:
+
+- ufbx, https://github.com/ufbx/ufbx, Copyright (c) 2020 Samuli Raivio,
+  MIT License or public domain (Unlicense).
+- assimp, https://github.com/assimp/assimp, Copyright (c) 2006-2026 assimp
+  team, BSD 3-Clause License.
+
+These parts follow ufbx closely, as facts about files rather than code:
+
+- The families of materials (src/fbx/scene/shading.rs, `family`): Maya's
+  shader `RenderAPI` names (ARNOLD_SHADER_ID, OSL, SFX_PBS_SHADER), the
+  3ds Max class IDs of the Physical, PBR, glTF and OpenPBR materials, and
+  the order the three are asked in.
+- Which property templates apply to which objects
+  (src/fbx/scene/graph.rs, `Graph::template`).
+- The meaning of `InheritType` and how a child inherits its parent's scale
+  under each (src/fbx/scene/transform.rs, `Placed`).
+
+The order of the transform stack is the one Autodesk's FBX SDK documents.
