@@ -25,7 +25,6 @@ use kinogaki_studio_api::{
     DataTypeId, Error, FileFormat, FormatId, FormatOptions, Imported, Input, Package, PackageId,
     Purpose, Reading, Value, standard,
 };
-use std::sync::LazyLock;
 
 /// The package's id.
 pub fn id() -> PackageId {
@@ -44,15 +43,13 @@ pub fn package() -> Package {
 
 /// What an FBX file holds: materials, polygons, instances of shared meshes,
 /// lights and cameras.
-static TYPES: LazyLock<[DataTypeId; 5]> = LazyLock::new(|| {
-    [
-        standard::materials().id(),
-        standard::geometry().id(),
-        standard::instances().id(),
-        standard::light().id(),
-        standard::camera().id(),
-    ]
-});
+const TYPES: &[DataTypeId] = &[
+    standard::materials().id(),
+    standard::geometry().id(),
+    standard::instances().id(),
+    standard::light().id(),
+    standard::camera().id(),
+];
 
 /// The format: it reads, and writes nothing (D24).
 pub struct Fbx;
@@ -72,7 +69,7 @@ impl FileFormat for Fbx {
         fbx::tree::detect(head).is_some()
     }
     fn produces(&self) -> &[DataTypeId] {
-        &*TYPES
+        TYPES
     }
     /// Textures on disk stay paths unless embedded; embedded media are
     /// embedded whatever it says.

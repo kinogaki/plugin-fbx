@@ -170,6 +170,28 @@ fn cameras_look_down_their_minus_z_and_lights_shine_down_theirs() {
 }
 
 #[test]
+fn a_light_out_of_range_is_left_out_and_said() {
+    let name = "houdini/box_7400_ascii.fbx";
+    let text = String::from_utf8(fixture(name)).unwrap();
+    let bright = r#"P: "Intensity", "Number", "", "A",250"#;
+    assert!(text.contains(bright));
+    let dim = text.replace(bright, r#"P: "Intensity", "Number", "", "A",-250"#);
+    let read = read_in(name, dim.as_bytes(), metres());
+    let point = read.items.iter().find(|i| i.name == "point_light");
+    assert!(point.is_none_or(|i| i.data.is_none()), "no light value");
+    assert!(
+        (read.warnings.iter()).any(|w| w.message.contains("point_light: a light out of range")),
+        "{:?}",
+        read.warnings
+    );
+    let sun = item(&read, "distant_light").data.as_ref();
+    assert!(
+        sun.is_some_and(|d| standard::light().is(d)),
+        "the others read"
+    );
+}
+
+#[test]
 fn a_z_up_export_lands_on_the_y_up_one_and_a_left_handed_one_faces_out() {
     let read_box = |name: &str| {
         let read = read(name);

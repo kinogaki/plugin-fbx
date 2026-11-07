@@ -197,8 +197,8 @@ impl Walk<'_> {
                 let camera = &scene.cameras[*k];
                 let lens = lights::camera(camera, self.space.scale(), scene.settings.unit);
                 let turned = self.turned(&inner, fbx::Camera::LOOK, fbx::Camera::UP);
-                match (turned, standard::lens(lens)) {
-                    (Some(world), Ok(lens)) => (world, Some(standard::camera().wrap(lens))),
+                match (turned, standard::camera().wrap(lens)) {
+                    (Some(world), Ok(lens)) => (world, Some(lens)),
                     _ => self.left_out(model, placed, "a camera with no lens or no direction"),
                 }
             }
@@ -207,11 +207,10 @@ impl Walk<'_> {
                 self.said
                     .extend(lights::approximated(light).map(str::to_owned));
                 let turned = self.turned(&inner, Light::DIRECTION, [0.0, 0.0, -1.0]);
-                match (
-                    turned,
-                    lights::light(light, self.space.scale(), self.shaping.colors)?,
-                ) {
-                    (Some(world), Some(light)) => (world, Some(standard::light().wrap(light))),
+                let light = lights::light(light, self.space.scale(), self.shaping.colors)?;
+                match (turned, light.map(|l| standard::light().wrap(l))) {
+                    (Some(world), Some(Ok(light))) => (world, Some(light)),
+                    (_, Some(Err(_))) => self.left_out(model, placed, "a light out of range"),
                     _ => (placed, None),
                 }
             }
