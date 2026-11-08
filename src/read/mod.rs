@@ -5,10 +5,15 @@
 //! world matrices): a group, a mesh's polygons ([`geometry`]), a camera or
 //! a light ([`lights`]) turned to look down its −Z.
 //!
-//! A mesh several nodes show is one value held once: each node places an
-//! instance of it by its geometric transform, naming its own material on
-//! the Instance domain where its slots give the one material another; a
-//! node whose slots give several others shows its own copy.
+//! A mesh several nodes show is one value held once, made in the slots of the
+//! node telling the most of them apart: each node places an instance of it by
+//! its geometric transform, naming on the Instance domain its own `material`
+//! where its slots give the mesh's polygons one, else its `material_map` where
+//! they give them others name for name. A node whose slots a renaming can't
+//! express shows its own copy: one giving two materials to two slots the mesh
+//! names alike, or no material where the mesh names one (a node of fewer
+//! slots), since an instance's materials map names, and a pair names no
+//! blank.
 mod geometry;
 mod lights;
 mod materials;
@@ -79,6 +84,7 @@ pub(crate) fn read(
         },
         worlds: scene.world_matrices(),
         users: users(&scene),
+        slots: telling(&scene, &keys),
         shared: HashMap::new(),
         said: Vec::new(),
     };
@@ -155,6 +161,25 @@ fn users(scene: &Scene) -> Vec<usize> {
     users
 }
 
+/// Each mesh's slots as the node showing it that tells the most materials
+/// apart gives them (the most slots among equals; the first of those).
+fn telling(scene: &Scene, keys: &[Arc<str>]) -> Vec<Vec<usize>> {
+    let mut best: Vec<Option<(usize, usize, &[usize])>> = vec![None; scene.meshes.len()];
+    for model in &scene.models {
+        let Attribute::Mesh(k) = model.attribute else {
+            continue;
+        };
+        let apart: HashSet<&str> = model.materials.iter().map(|&m| &*keys[m]).collect();
+        let rank = (apart.len(), model.materials.len());
+        if best[k].is_none_or(|(a, n, _)| rank > (a, n)) {
+            best[k] = Some((rank.0, rank.1, &model.materials));
+        }
+    }
+    (best.into_iter())
+        .map(|b| b.map_or_else(Vec::new, |(_, _, slots)| slots.to_vec()))
+        .collect()
+}
+
 /// The walk over the scene's nodes.
 struct Walk<'s> {
     scene: &'s Scene,
@@ -163,6 +188,8 @@ struct Walk<'s> {
     /// Each node's world matrix in the file.
     worlds: Vec<Matrix>,
     users: Vec<usize>,
+    /// The slots each mesh is held in when nodes share it ([`telling`]).
+    slots: Vec<Vec<usize>>,
     /// Each shared mesh as one value, with the slots it was made with.
     shared: HashMap<usize, (Data, Vec<usize>)>,
     said: Vec<String>,
@@ -234,60 +261,46 @@ impl Walk<'_> {
         frame(origin, direction(look), direction(up))
     }
 
-    /// An instance of shared mesh `k` where `model` places it: the mesh
-    /// held once, made with the materials of the first node showing it; the
-    /// node's own material on the Instance domain where its one slot gives
-    /// another, its `material_map` where its slots give others (each slot's
-    /// material in the mesh, then the node's); its own copy where the mesh
-    /// names one material in two slots the node gives two, or the node gives
-    /// another count of slots.
+    /// An instance of shared mesh `k` where `model` places it: the mesh held
+    /// once in its telling node's slots; on the Instance domain the node's
+    /// own `material` where its slots give every polygon one, else its
+    /// `material_map` where they give the mesh's materials others name for
+    /// name ([`renamed`]); its own copy where they can't.
     fn instance(&mut self, k: usize, model: &Model) -> Result<Option<Data>, Error> {
         let scene = self.scene;
         if !self.shared.contains_key(&k) {
             let at = shown(&self.space, &Matrix::IDENTITY);
-            let mesh = geometry::mesh(
-                &scene.meshes[k],
-                &at,
-                &model.materials,
-                &self.shaping,
-                &mut self.said,
-            )?;
-            self.shared.insert(
-                k,
-                (standard::geometry().wrap(mesh), model.materials.clone()),
-            );
+            let slots = self.slots[k].clone();
+            let mesh =
+                geometry::mesh(&scene.meshes[k], &at, &slots, &self.shaping, &mut self.said)?;
+            self.shared
+                .insert(k, (standard::geometry().wrap(mesh), slots));
         }
         let (prototype, slots) = self.shared[&k].clone();
-        let attributes = match (&slots[..], &model.materials[..]) {
-            (held, own) if held == own => Attributes::new(),
-            ([_], [own]) => {
-                let key = &*self.shaping.keys[*own];
-                let text = Text::from_strs([key]);
-                Attributes::new().with(
-                    Domain::Instance,
-                    names::MATERIAL,
-                    values::Attribute::text(text),
-                )?
-            }
-            (held, own) if held.len() == own.len() && distinct(held, self.shaping.keys) => {
-                let key = |m: &usize| &*self.shaping.keys[*m];
-                let pairs: Vec<&str> = (held.iter().zip(own))
-                    .filter(|(h, o)| key(h) != key(o))
-                    .flat_map(|(h, o)| [key(h), key(o)])
-                    .collect();
+        let used = used_slots(&prototype, slots.len());
+        let keys = self.shaping.keys;
+        let attributes = match renamed(&used, (&slots, &model.materials), keys) {
+            Some(Renamed::Same) => Attributes::new(),
+            Some(Renamed::Whole(key)) => Attributes::new().with(
+                Domain::Instance,
+                names::MATERIAL,
+                values::Attribute::text(Text::from_strs([key])),
+            )?,
+            Some(Renamed::Mapped(pairs)) => {
                 let ty = values::AttributeType {
                     array: true,
                     ..values::AttributeType::TEXT
                 };
-                let offsets = vec![0, pairs.len() as u32].into();
-                let text = values::Values::Text(Text::from_strs(pairs));
+                let offsets = vec![0, 2 * pairs.len() as u32].into();
+                let flat = pairs.iter().flat_map(|&(a, b)| [a, b]);
+                let text = values::Values::Text(Text::from_strs(flat));
                 Attributes::new().with(
                     Domain::Instance,
                     names::MATERIAL_MAP,
                     values::Attribute::arrays(ty, offsets, text)?,
                 )?
             }
-            _ => {
+            None => {
                 let at = shown(&self.space, &model.geometric.matrix());
                 let mesh = geometry::mesh(
                     &scene.meshes[k],
@@ -309,8 +322,60 @@ impl Walk<'_> {
     }
 }
 
-/// Whether `slots` name each material key of `keys` once.
-fn distinct(slots: &[usize], keys: &[Arc<str>]) -> bool {
-    let mut seen = HashSet::new();
-    slots.iter().all(|&m| seen.insert(&keys[m]))
+/// The slots of `slots_held` a held mesh's polygons are in: its `material`
+/// text's indices are their slots ([`Text::NONE`] for none).
+fn used_slots(prototype: &Data, slots_held: usize) -> Vec<usize> {
+    let polygons = standard::geometry().get(prototype);
+    let text = polygons.and_then(|p| p.attributes().text(Domain::Primitive, names::MATERIAL));
+    let used: BTreeSet<usize> = (text.into_iter())
+        .flat_map(|t| t.indices().iter().map(|&i| i as usize))
+        .filter(|&i| i < slots_held)
+        .collect();
+    used.into_iter().collect()
+}
+
+/// How a node shows a mesh held in other slots.
+#[derive(Debug, PartialEq)]
+enum Renamed<'k> {
+    /// As it is held.
+    Same,
+    /// In one material.
+    Whole(&'k str),
+    /// Each pair's first material as its second.
+    Mapped(Vec<(&'k str, &'k str)>),
+}
+
+/// How a node giving the slots `own` shows a mesh held in `held`'s, over the
+/// slots its polygons are in (`used`): none when a renaming of materials
+/// can't say it (two slots held in one material it gives two, or a slot held
+/// in a material it gives none).
+fn renamed<'k>(
+    used: &[usize],
+    (held, own): (&[usize], &[usize]),
+    keys: &'k [Arc<str>],
+) -> Option<Renamed<'k>> {
+    let key = |slots: &[usize], s: usize| slots.get(s).map(|&m| &*keys[m]);
+    let pairs: Vec<(&str, Option<&str>)> = (used.iter())
+        .filter_map(|&s| Some((key(held, s)?, key(own, s))))
+        .collect();
+    if pairs.iter().all(|&(a, b)| Some(a) == b) {
+        return Some(Renamed::Same);
+    }
+    let mut given = pairs.iter().map(|&(_, b)| b);
+    if let Some(Some(one)) = given.next()
+        && given.all(|b| b == Some(one))
+    {
+        return Some(Renamed::Whole(one));
+    }
+    let mut map: Vec<(&str, &str)> = Vec::new();
+    for (a, b) in pairs {
+        let b = b?;
+        match map.iter().find(|(from, _)| *from == a) {
+            Some(&(_, to)) if to != b => return None,
+            Some(_) => {}
+            None => map.push((a, b)),
+        }
+    }
+    map.retain(|(a, b)| a != b);
+    Some(Renamed::Mapped(map))
 }

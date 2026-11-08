@@ -281,20 +281,15 @@ fn materials(
         };
         usize::try_from(slot).ok()
     };
-    // The slots' keys once each, an index past them naming nothing.
+    // The slots' keys, a polygon's index its slot; one past them names none.
     let table: Vec<Arc<str>> = slots.iter().map(|&m| keys[m].clone()).collect();
-    let none = table.len() as u32;
     let faces: Vec<u32> = (kept.faces.iter())
         .map(|&f| {
             slot_of(f as usize)
                 .filter(|&s| s < slots.len())
-                .map_or(none, |s| s as u32)
+                .map_or(Text::NONE, |s| s as u32)
         })
         .collect();
-    let mut table = table;
-    if faces.contains(&none) {
-        table.push(Arc::from(""));
-    }
     Some(Text::new(Column::new(faces), table.into()))
 }
 

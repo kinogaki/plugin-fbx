@@ -597,6 +597,109 @@ fn a_mesh_nodes_give_other_materials_is_held_once_with_their_maps() {
     );
 }
 
+/// A mesh of two polygons in slots 0 and 1, shown by five nodes: A giving
+/// both Red, B Blue and Green, C Green alone (polygon 1 then in none), D Blue,
+/// Green and Red (a slot no polygon is in), E Green and Blue. Held once in
+/// D's slots, which tell the most apart: B shows it as held, A in Red, E
+/// mapping Blue and Green to each other, and C, whose second polygon a
+/// renaming can't leave in no material, its own copy.
+#[test]
+fn nodes_a_renaming_of_materials_says_share_the_mesh_and_the_rest_copy_it() {
+    use kinogaki_studio_api::geometry::Values;
+    let slots = node(
+        "LayerElementMaterial",
+        vec![Raw::Int(0)],
+        vec![
+            node("MappingInformationType", vec![s("ByPolygon")], vec![]),
+            node("ReferenceInformationType", vec![s("IndexToDirect")], vec![]),
+            node("Materials", vec![ints(&[0, 1])], vec![]),
+        ],
+    );
+    let mesh = node(
+        "Geometry",
+        vec![Raw::Int(1), s("Geometry::Two"), s("Mesh")],
+        vec![
+            node(
+                "Vertices",
+                vec![floats(&[
+                    0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0,
+                ])],
+                vec![],
+            ),
+            node(
+                "PolygonVertexIndex",
+                vec![ints(&[0, 1, !2, 0, 2, !3])],
+                vec![],
+            ),
+            slots,
+        ],
+    );
+    let (red, green, blue) = (10, 11, 12);
+    let nodes: [(&str, &[i64]); 5] = [
+        ("A", &[red, red]),
+        ("B", &[blue, green]),
+        ("C", &[green]),
+        ("D", &[blue, green, red]),
+        ("E", &[green, blue]),
+    ];
+    let mut objects = vec![
+        mesh,
+        material(red, "Red", "phong", vec![]),
+        material(green, "Green", "phong", vec![]),
+        material(blue, "Blue", "phong", vec![]),
+    ];
+    let mut connections = Vec::new();
+    for (k, (name, given)) in nodes.iter().enumerate() {
+        let id = 2 + k as i64;
+        objects.push(object("Model", id, name, "Mesh", vec![], vec![]));
+        connections.extend([oo(id, 0), oo(1, id)]);
+        connections.extend(given.iter().map(|&m| oo(m, id)));
+    }
+    let bytes = binary(&document(objects, connections), 7400, true);
+    let read = read_in("renamed.fbx", &bytes, metres());
+    let instances = |name: &str| {
+        let data = item(&read, name).data.clone().expect("shown");
+        standard::instances().get(&data).cloned()
+    };
+    let [a, b, d, e] = ["A", "B", "D", "E"].map(|n| instances(n).expect("an instance"));
+    for other in [&b, &d, &e] {
+        assert!(
+            a.prototypes()[0].ptr_eq(&other.prototypes()[0]),
+            "held once"
+        );
+    }
+    let held = standard::geometry().get(&a.prototypes()[0]).unwrap();
+    let names = held
+        .attributes()
+        .text(Domain::Primitive, names::MATERIAL)
+        .unwrap();
+    assert_eq!(
+        (names.get(0), names.get(1)),
+        (Some("Blue"), Some("Green")),
+        "D's"
+    );
+    assert!(b.attributes().is_empty() && d.attributes().is_empty());
+    let whole = a
+        .attributes()
+        .text(Domain::Instance, names::MATERIAL)
+        .unwrap();
+    assert_eq!(whole.get(0), Some("Red"));
+    let map = (e.attributes().get(Domain::Instance, names::MATERIAL_MAP)).expect("a map");
+    let Values::Text(pairs) = map.values() else {
+        panic!("text");
+    };
+    let pairs: Vec<&str> = (0..pairs.len()).filter_map(|k| pairs.get(k)).collect();
+    assert_eq!(pairs, ["Blue", "Green", "Green", "Blue"]);
+    assert!(instances("C").is_none(), "C's own copy");
+    let copy = item(&read, "C").data.clone().unwrap();
+    let copy = standard::geometry().get(&copy).expect("polygons");
+    let own = copy
+        .attributes()
+        .text(Domain::Primitive, names::MATERIAL)
+        .unwrap();
+    assert_eq!((own.get(0), own.get(1)), (Some("Green"), None));
+}
+
 #[test]
 fn a_texture_under_a_property_reaches_its_input_placed_and_wrapped() {
     let texture = object(

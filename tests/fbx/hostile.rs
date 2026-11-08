@@ -150,8 +150,9 @@ fn a_polygon_of_two_hundred_thousand_corners_is_checked_in_n_log_n() {
 fn a_mesh_copied_for_each_node_is_charged_for_each() {
     // 378 KB once made 312 MB: a mesh shown by hundreds of nodes, each in
     // materials of its own, made again for each. Nodes giving its two slots
-    // two others hold it once and map them; nodes giving it another count
-    // of slots than the first still copy it, each charged.
+    // two others hold it once and map them; nodes giving one slot of the two
+    // its polygons are in still copy it (no pair names no material), each
+    // charged.
     let n = 20_000;
     let points: Vec<f64> = (0..n)
         .flat_map(|k| [k as f64, 0.0, (k % 3) as f64])
@@ -177,8 +178,8 @@ fn a_mesh_copied_for_each_node_is_charged_for_each() {
         ],
     );
     // 300 nodes, each in two materials of its own, past the first in
-    // `more` more.
-    let file = |more: usize| {
+    // `fewer` fewer.
+    let file = |fewer: usize| {
         let mut objects = vec![mesh.clone()];
         let mut links = Vec::new();
         for k in 0..300 {
@@ -191,7 +192,7 @@ fn a_mesh_copied_for_each_node_is_charged_for_each() {
                 vec![],
                 vec![],
             ));
-            let own = if k == 0 { 2 } else { 2 + more };
+            let own = if k == 0 { 2 } else { 2 - fewer };
             for m in 0..own {
                 let name = format!("{}{k}", ["A", "B", "C"][m]);
                 objects.push(material(id + 1 + m as i64, &name, "phong", vec![]));
