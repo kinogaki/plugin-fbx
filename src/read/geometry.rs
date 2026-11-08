@@ -105,13 +105,12 @@ pub(super) fn mesh(
     if let Some(colors) = mesh.colors.first()
         && let Some((domain, values)) = elements.spread(colors, false)
     {
-        let mut rgb: Vec<[f64; 3]> = (values.as_chunks::<4>().0.iter())
-            .map(|c| [c[0], c[1], c[2]].map(f64::from))
+        let mut cd: Vec<[f32; 3]> = (values.as_chunks::<4>().0.iter())
+            .map(|c| [c[0], c[1], c[2]])
             .collect();
-        if let Err(e) = cx.colors.to_working(LIN_REC709, &mut rgb) {
+        if let Err(e) = (cx.colors).convert_f32(LIN_REC709, cx.colors.working(), &mut cd) {
             warnings.push(format!("{}: colors kept as they are: {e}", mesh.name));
         }
-        let cd: Vec<[f32; 3]> = rgb.iter().map(|c| c.map(|v| v as f32)).collect();
         attributes = attributes.with(domain, names::CD, Attribute::tuples(cd, Meaning::Color)?)?;
         let alpha: Vec<f32> = values.as_chunks::<4>().0.iter().map(|c| c[3]).collect();
         if alpha.iter().any(|&a| a != 1.0) {
