@@ -5,7 +5,7 @@
 //! holds each application's own units as a percentage), its decay left to
 //! the light's falloff, said.
 use crate::fbx::{AreaShape, Camera as FbxCamera, Decay, Light as FbxLight, LightKind, Projection};
-use kinogaki_render_api::standard::{Light, LightShape};
+use kinogaki_render_api::standard::{Light, LightShape, Shaping};
 use kinogaki_render_api::{Camera, Projection as Lens};
 use kinogaki_studio_api::Error;
 use kinogaki_studio_api::color::{ColorService, LIN_REC709};
@@ -48,29 +48,35 @@ pub(super) fn light(
     colors: &dyn ColorService,
 ) -> Result<Option<Light>, Error> {
     let unit = (scale as f32).max(f32::MIN_POSITIVE);
-    let shape = match (light.kind, light.area_shape) {
-        (LightKind::Point, _) | (LightKind::Area, AreaShape::Sphere) => LightShape::Spot {
-            radius: unit * 0.1,
-            cone_angle: 180.0,
-            cone_softness: 0.0,
-        },
+    let sphere = |point| LightShape::Sphere {
+        radius: unit * 0.1,
+        point,
+    };
+    let (shape, shaping) = match (light.kind, light.area_shape) {
+        (LightKind::Point, _) => (sphere(true), None),
+        (LightKind::Area, AreaShape::Sphere) => (sphere(false), None),
         (LightKind::Spot, _) => {
             let [inner, outer] = light.cone.map(|a| a as f32);
-            LightShape::Spot {
-                radius: unit * 0.1,
+            let shaping = Shaping {
                 cone_angle: (outer / 2.0).clamp(0.0, 180.0),
                 cone_softness: if outer > 0.0 {
                     ((outer - inner) / outer).clamp(0.0, 1.0)
                 } else {
                     0.0
                 },
-            }
+                ..Shaping::default()
+            };
+            (sphere(true), Some(shaping))
         }
-        (LightKind::Directional, _) => LightShape::Distant { angle: 0.0 },
-        (LightKind::Area, AreaShape::Rectangle) => LightShape::Rect {
-            width: unit,
-            height: unit,
-        },
+        (LightKind::Directional, _) => (LightShape::Distant { angle: 0.0 }, None),
+        (LightKind::Area, AreaShape::Rectangle) => (
+            LightShape::Rect {
+                width: unit,
+                height: unit,
+                texture: None,
+            },
+            None,
+        ),
         (LightKind::Volume, _) => return Ok(None),
     };
     let mut color = [light.color];
@@ -80,6 +86,7 @@ pub(super) fn light(
         color: color[0].map(|c| c as f32),
         intensity: (light.intensity / 100.0) as f32,
         normalize: matches!(light.kind, LightKind::Area),
+        shaping,
         ..Light::default()
     }))
 }

@@ -156,11 +156,9 @@ fn cameras_look_down_their_minus_z_and_lights_shine_down_theirs() {
         .unwrap();
     assert!(matches!(
         point.shape,
-        LightShape::Spot {
-            cone_angle: 180.0,
-            ..
-        }
+        LightShape::Sphere { point: true, .. }
     ));
+    assert!(point.shaping.is_none());
     assert_eq!(point.intensity, 2.5);
     assert!(
         read.warnings
