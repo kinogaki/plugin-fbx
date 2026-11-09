@@ -1,8 +1,9 @@
 //! FBX: the reader's node tree (`tree`), the scene of the committed exports
 //! (`scene`), the object graph on synthetic files (`graph`), and the format
-//! through the SDK's contract (`format`, `measure`), and hostile files
-//! (`hostile`).
+//! through the SDK's contract (`format`, `measure`, File ▸ Open's read in
+//! `document`), and hostile files (`hostile`).
 mod common;
+mod document;
 mod format;
 mod graph;
 mod hostile;

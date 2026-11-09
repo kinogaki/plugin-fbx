@@ -46,8 +46,10 @@ pub(crate) fn read(
     let mut scene = fbx::read_with(&bytes, &reading.budget).map_err(|e| failed(input, e))?;
     drop(bytes);
     reading.check()?;
-    let space = space::conversion(&scene.settings, reading.units)
-        .map_err(|e| Error::invalid(format!("{input}: {}", e.message())))?;
+    let failed_units = |e: Error| Error::invalid(format!("{input}: {}", e.message()));
+    let kept = reading.document_units(space::units(&scene.settings).map_err(failed_units)?);
+    let space =
+        space::conversion(&scene.settings, kept.unwrap_or(reading.units)).map_err(failed_units)?;
     let mut said: BTreeSet<String> = std::mem::take(&mut scene.warnings).into_iter().collect();
     let named = Named::new(input, chosen, reading);
     let mut files = Files::new(&mut scene.videos, &named);
@@ -119,6 +121,7 @@ pub(crate) fn read(
     Ok(Imported {
         items,
         warnings: said.into_iter().map(Diagnostic::warning).collect(),
+        units: kept,
     })
 }
 

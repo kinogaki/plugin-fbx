@@ -4,10 +4,23 @@
 //! becomes `Q·W·Q⁻¹` in the project, its translation scaled, and what it
 //! shows `s·Q·p`: the hierarchy keeps its shape and no placement carries
 //! the change of units. And FBX's matrices as placements.
-use crate::fbx::{Axes, Matrix, Settings};
+use crate::fbx::{Axes, Direction, Matrix, Settings};
 use kinogaki_studio_api::Error;
 use kinogaki_studio_api::format::Conversion;
 use kinogaki_studio_api::geometry::{Units, UpAxis, Vec3, Xform};
+
+/// The units of `settings`' space: its unit, and its up axis where that is
+/// Y or Z (else Y, which the file's axes turn into).
+///
+/// # Errors
+/// A file unit that isn't a finite length above zero.
+pub(crate) fn units(settings: &Settings) -> Result<Units, Error> {
+    let up = match settings.axes.up {
+        Direction::PosZ | Direction::NegZ => UpAxis::Z,
+        _ => UpAxis::Y,
+    };
+    Units::new(settings.unit / 100.0, up)
+}
 
 /// The change from `settings`' space into `project`.
 ///

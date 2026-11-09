@@ -2,6 +2,7 @@
 # Written by `python3 tools/check_all.py --inventory`; every check compares its tests with it.
 kinogaki-fbx/doc test plugins/fbx/src/lib.rs -
 kinogaki-fbx/fbx hand measure::hand_run_a_million_triangles_read_within_the_budget
+kinogaki-fbx/fbx test document::an_fbx_opens_in_its_unit_scale
 kinogaki-fbx/fbx test format::a_light_out_of_range_is_left_out_and_said
 kinogaki-fbx/fbx test format::a_materials_lengths_move_into_the_projects_units
 kinogaki-fbx/fbx test format::a_mesh_nodes_give_other_materials_is_held_once_with_their_maps
