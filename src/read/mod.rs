@@ -122,6 +122,7 @@ pub(crate) fn read(
         items,
         warnings: said.into_iter().map(Diagnostic::warning).collect(),
         units: kept,
+        ..Imported::default()
     })
 }
 
