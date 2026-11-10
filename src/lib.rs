@@ -61,6 +61,9 @@ impl FileFormat for Fbx {
     fn label(&self) -> &str {
         "Autodesk FBX"
     }
+    fn short_label(&self) -> &str {
+        "FBX"
+    }
     fn extensions(&self) -> &[&str] {
         &["fbx"]
     }
